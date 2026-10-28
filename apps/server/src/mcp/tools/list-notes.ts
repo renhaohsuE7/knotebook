@@ -31,7 +31,7 @@ import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { UUID_RE } from "../../notes/service.js";
 import { noNul } from "../../notes/schemas.js";
-import { noteSummarySchema, toNoteSummary } from "../dto.js";
+import { noteSummariesForModel, noteSummarySchema } from "../dto.js";
 import { BAD_CURSOR_MESSAGE } from "../keyset-cursor.js";
 import { MCP_PAGE_MAX } from "../limits.js";
 import { buildNoteListQuery, type NoteListCursor } from "../queries.js";
@@ -130,7 +130,7 @@ export async function listNotes(args: ListNotesArgs, ctx: McpToolCtx): Promise<C
   const page = hasMore ? rows.slice(0, limit) : rows;
   const last = page[page.length - 1];
   return toolResult({
-    notes: page.map(row => toNoteSummary(row, row.role)),
+    notes: await noteSummariesForModel(ctx.db, page),
     nextCursor: hasMore && last ? encodeCursor(last) : null,
   });
 }

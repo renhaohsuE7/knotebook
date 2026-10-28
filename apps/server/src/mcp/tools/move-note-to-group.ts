@@ -12,7 +12,7 @@ import { moveNoteToGroup } from "../../notes/move-note.js";
 import { GROUP_ID, NOTE_ID } from "../../notes/schemas.js";
 import { StorageQuotaExceeded } from "../../storage/tx/quota.js";
 import { canViewSpaceUsage } from "../../storage/usage.js";
-import { noteSummarySchema, toNoteSummary } from "../dto.js";
+import { noteSummariesForModel, noteSummarySchema } from "../dto.js";
 import { NOTE_NOT_FOUND_MESSAGE } from "../note-read.js";
 import { rereadVisibleNote } from "../note-rows.js";
 import { toolError, toolResult } from "../tool-result.js";
@@ -99,7 +99,8 @@ export async function moveNoteToGroupTool(args: MoveNoteToGroupArgs, ctx: McpToo
       // 交易外重讀（grouped 分支，role 由群組旗標算）。落空＝commit 之後、重讀之前被移出群組或筆記被刪——與 REST 同窗回 404 對齊。
       const row = await rereadVisibleNote(ctx, args.note_id.toLowerCase(), { groupId: args.group_id.toLowerCase() });
       if (!row) return toolError("not_found", NOTE_NOT_FOUND_MESSAGE);
-      return toolResult({ note: toNoteSummary(row, row.role) });
+      const [note] = await noteSummariesForModel(ctx.db, [row]);
+      return toolResult({ note });
     }
   }
 }

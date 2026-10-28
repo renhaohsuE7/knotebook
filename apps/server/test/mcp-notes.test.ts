@@ -244,7 +244,7 @@ describe("#108 list_notes", () => {
     const out = payloadOf(await callTool(ctx.app, token, "list_notes"));
     expect(Object.keys(out).sort()).toEqual(["nextCursor", "notes"]);
     expect(Object.keys(out.notes[0]).sort()).toEqual(
-      ["id", "lastEdited", "owner", "role", "slug", "title", "updatedAt", "url"].sort()
+      ["folder", "id", "lastEdited", "owner", "role", "slug", "title", "updatedAt", "url"].sort()
     );
     // 未被截斷時**沒有** `titleTruncated` 這把 key（不是 `undefined`）。
     expect("titleTruncated" in out.notes[0]!).toBe(false);

@@ -15,7 +15,7 @@ import { roleFromGroupFlags } from "../../notes/service.js";
 import type { StorageSpace } from "../../storage/space.js";
 import { StorageQuotaExceeded } from "../../storage/tx/quota.js";
 import { canViewSpaceUsage } from "../../storage/usage.js";
-import { noteSummarySchema, toNoteSummary } from "../dto.js";
+import { noteSummariesForModel, noteSummarySchema } from "../dto.js";
 import { NOTE_NOT_FOUND_MESSAGE } from "../note-read.js";
 import { insertedRow } from "../note-rows.js";
 import { toolError, toolResult } from "../tool-result.js";
@@ -143,7 +143,8 @@ export async function copyNoteTool(args: CopyNoteArgs, ctx: McpToolCtx): Promise
     case "copied": {
       const personal = out.target === null;
       const row = insertedRow(out.note, { ownerHandle: personal ? ctx.userHandle : null, groupName: out.target?.name ?? null });
-      return toolResult({ note: toNoteSummary(row, out.target === null ? "owner" : roleFromGroupFlags(out.target)) });
+      const [note] = await noteSummariesForModel(ctx.db, [{ ...row, role: out.target === null ? "owner" : roleFromGroupFlags(out.target) }]);
+      return toolResult({ note });
     }
   }
 }

@@ -28,7 +28,7 @@ import { loadCreateTarget } from "../../notes/create-target.js";
 import { roleFromGroupFlags } from "../../notes/service.js";
 import type { SlugScope } from "../../notes/slug.js";
 import { GROUP_ID, MD, TITLE } from "../../notes/schemas.js";
-import { noteSummarySchema, toNoteSummary } from "../dto.js";
+import { noteSummariesForModel, noteSummarySchema } from "../dto.js";
 import { WRITE_NOTE_LINK_SENTENCE } from "../note-link-strings.js";
 import { insertedRow, rereadVisibleNote } from "../note-rows.js";
 import { toolError, toolResult } from "../tool-result.js";
@@ -199,7 +199,8 @@ export async function createNote(args: CreateNoteArgs, ctx: McpToolCtx): Promise
       return toolError("internal", CREATE_FAILED_MESSAGE);
     }
     const fresh = await rereadVisibleNote(ctx, out.noteId, target.scope);
-    return toolResult({ note: toNoteSummary(fresh ?? insertedRow(out.inserted, target), fresh?.role ?? target.role) });
+    const [note] = await noteSummariesForModel(ctx.db, [fresh ?? { ...insertedRow(out.inserted, target), role: target.role }]);
+    return toolResult({ note });
   }
 
   // 5. 不帶 `content`：只建一列（`notes/create.ts`），不碰 live doc、不吃 `edit` 桶、不重讀
@@ -212,5 +213,6 @@ export async function createNote(args: CreateNoteArgs, ctx: McpToolCtx): Promise
   } catch (err) {
     return mapGroupFk(err);
   }
-  return toolResult({ note: toNoteSummary(insertedRow(created, target), target.role) });
+  const [note] = await noteSummariesForModel(ctx.db, [{ ...insertedRow(created, target), role: target.role }]);
+  return toolResult({ note });
 }

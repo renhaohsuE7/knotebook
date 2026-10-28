@@ -9,7 +9,7 @@ import { isRetryableTxError } from "../../db/pg-errors.js";
 import { NOTE_ID } from "../../notes/schemas.js";
 import { resolveTrashedNoteAccess } from "../../notes/service.js";
 import { restoreTrashed, type TrashBatchResult } from "../../trash/service.js";
-import { noteSummarySchema, toNoteSummary } from "../dto.js";
+import { noteSummariesForModel, noteSummarySchema } from "../dto.js";
 import { rereadOwnOrGroupNote } from "../note-rows.js";
 import { toolError, toolResult } from "../tool-result.js";
 import { WRITE_RATE_LIMITED_MESSAGE } from "../write-messages.js";
@@ -67,5 +67,6 @@ export async function restoreNoteTool(args: { note_id: string }, ctx: McpToolCtx
   // 落空＝commit 之後、重讀之前又被移入或降權（REST 的同一窗是「不列 restored、也不列 skipped」）。
   const row = await rereadOwnOrGroupNote(ctx, id);
   if (!row) return toolError("not_found", RESTORE_NOT_FOUND_MESSAGE);
-  return toolResult({ note: toNoteSummary(row, row.role) });
+  const [note] = await noteSummariesForModel(ctx.db, [row]);
+  return toolResult({ note });
 }

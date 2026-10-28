@@ -1,7 +1,7 @@
 /**
  * #181 PR-2d：MCP 垃圾桶工具（spec 2026-10-21 §6.8.1、§9-11、A2-13）。T4 寫 `list_trash`（LT 段）；T5 寫 `delete_note`／
  * `restore_note`（DN、RN、DS、PX、SC 段）。併入資料夾後補 FD 段（資料夾 spec §5.8：移入留在資料夾並寫路徑快照、還原回原資料夾，
- * 資料夾已刪則重建路徑；MCP 回應不帶資料夾欄位）。
+ * 資料夾已刪則重建路徑；資料夾 PR-3d 起 restore_note 的 note 帶 folder，delete_note、list_trash 仍不帶）。
  * 比對對象一律是同一人 cookie 的 REST（`GET /api/trash`、`DELETE /api/notes/:id`、`POST /api/trash/restore`，同一組服務函式）。
  * 造垃圾桶狀態打 `DELETE /api/notes/:id` 或 `markTrashed`；大量資料與病態字串直改 DB。斷言共編閘門（`isDeleting`）的案接真的 hooks。
  */
@@ -977,8 +977,8 @@ describe("FD2 資料夾在垃圾桶期間被刪：restore_note 重建路徑", ()
   });
 });
 
-describe("FD3 MCP 回應不帶資料夾欄位（docs/mcp.md）", () => {
-  it("資料夾裡的筆記：delete_note、list_trash、restore_note 的 structuredContent 都沒有含 folder 的鍵；REST 的 GET /api/trash 有 folderPath", async () => {
+describe("FD3 MCP 回應的資料夾欄（restore_note 帶 folder；delete_note、list_trash 沒有）", () => {
+  it("資料夾裡的筆記：delete_note、list_trash 的 structuredContent 沒有含 folder 的鍵；restore_note 的 note.folder 是原資料夾；REST 的 GET /api/trash 有 folderPath", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const [f] = await seedFolderChain(ctx.db, { personal: me.id }, ["F"]);
@@ -999,7 +999,8 @@ describe("FD3 MCP 回應不帶資料夾欄位（docs/mcp.md）", () => {
     expect((await restListOf(ctx.app, me.id)).items[0]!.folderPath).toEqual(["F"]);
     const note = await restoreOk(ctx.app, auth, n.id);
     expect(note.id).toBe(n.id);
-    expect(folderKeys(note)).toEqual([]);
+    expect((note as NoteSummary & { folder?: unknown }).folder).toEqual({ id: f, name: "F" });
+    expect(folderKeys(note)).toEqual(["folder"]); // 多出其他含 folder 的鍵就紅
     expect((await noteFolderCols(ctx.db.$client, n.id))!.folder_id).toBe(f);
   });
 });
