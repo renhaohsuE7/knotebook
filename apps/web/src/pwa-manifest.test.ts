@@ -20,6 +20,7 @@ interface ManifestIcon {
   purpose?: string;
 }
 interface Manifest {
+  id: string;
   name: string;
   short_name: string;
   start_url: string;
@@ -63,6 +64,8 @@ describe("manifest.webmanifest（#336）", () => {
     const m = readManifest();
     expect(m.name).toBe("Knotebook");
     expect(m.short_name).toBe("Knotebook");
+    // id 固定 app 身分：未設時瀏覽器以 start_url 代替，日後改 start_url 會讓已安裝的變成另一個 app（#336，Chrome DevTools 建議值）
+    expect(m.id).toBe("/");
     expect(m.start_url).toBe("/");
     expect(m.scope).toBe("/");
     expect(m.display).toBe("standalone");
