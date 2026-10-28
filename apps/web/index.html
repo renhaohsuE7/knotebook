@@ -7,6 +7,15 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <!--
+      #336 PWA：可加到主畫面、以 standalone 開啟（無 service worker、無離線）。
+      theme-color 取 index.css 的頁底色 --background（淺 #f3f4f6／深 #0e1013），standalone 時是狀態列的顏色；
+      淺色值與 manifest.webmanifest 的 theme_color 必須一致（pwa-manifest.test.ts 守著）。
+      ⚠ 這裡不得加 inline script：security-headers.ts 逐回應算 inline script 的 hash，多一段就要一起過 CSP。
+    -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f3f4f6" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0e1013" />
+    <!--
       深色模式首屏防閃白：React 掛載前就把 .dark 打在 <html> 上。必須是同步的內嵌
       script（外部檔或 defer 都會晚於首次繪製）。這裡的 storage key 與 class 名是
       src/theme.tsx 的複製——那邊的 `theme.test.tsx` 有一條測試釘住兩邊一致。
