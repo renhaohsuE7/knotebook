@@ -9,7 +9,7 @@ Knotebook follows Keep a Changelog conventions: unreleased work accumulates unde
 
 ### Added
 
-- Knotebook can be added to a phone's or computer's home screen and opens in its own window, without the browser's address bar: the app now has a web app manifest with the italic "K" icon (including a maskable version for Android's icon shapes), and the window's top bar follows your device's light or dark setting. It is not an offline app: there is no service worker, so it needs the server just like the browser tab does. Installing needs the site to be served over HTTPS (or from `localhost`); see [Known limitations](docs/known-limitations.md) (#336).
+- Knotebook can be added to a phone's or computer's home screen and opens in its own window, without the browser's address bar: the app now has a web app manifest with the italic "K" icon (including a maskable version for Android's icon shapes), and, in browsers that honour it, the window's top bar follows your device's light or dark setting. It is not an offline app: there is no service worker, so it needs the server just like the browser tab does. In Chromium-based browsers, installing needs the site to be served over HTTPS (or from `localhost`); see [Known limitations](docs/known-limitations.md) (#336).
 
 ### Changed
 

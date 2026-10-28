@@ -9,7 +9,8 @@ const publicDir = `${process.cwd()}/public`;
 const indexHtml = readFileSync(`${process.cwd()}/index.html`, "utf8");
 // 先去掉 HTML 註解：被註解掉的 <link>／<meta> 在瀏覽器裡不存在，不能讓它們算數。
 const head = indexHtml.slice(indexHtml.indexOf("<head>"), indexHtml.indexOf("</head>")).replace(/<!--[\s\S]*?-->/g, "");
-// index.css 的 --background 註解記著淺／深兩組 hex（:root 與 :root.dark 各一條），theme-color 要與它們一致。
+// index.css 的 --background 行尾**註解**記著淺／深兩組 hex（:root 與 :root.dark 各一條）。⚠ 這裡比對的是註解，
+// 不是 oklch 實際值：改了 oklch 卻沒改註解，這組測試照樣綠——hex 註解與 theme-color 都是人工同步。
 const backgroundHexes = [...readFileSync(`${process.cwd()}/src/index.css`, "utf8").matchAll(/--background:[^;]*;\s*\/\*\s*(#[0-9a-f]{6})/gi)].map((m) => m[1].toLowerCase());
 
 interface ManifestIcon {
@@ -103,7 +104,7 @@ describe("index.html 的 PWA 標記（#336）", () => {
     expect(backgroundHexes).toHaveLength(2);
   });
 
-  it("theme-color 有淺／深兩組（prefers-color-scheme），淺色＝manifest theme_color＝頁底色，深色＝深色頁底色", () => {
+  it("theme-color 有淺／深兩組（prefers-color-scheme），淺色＝manifest theme_color＝頁底色註解 hex，深色＝深色頁底色註解 hex", () => {
     const metas = head.match(/<meta\s+name="theme-color"[^>]*>/g) ?? [];
     expect(metas).toHaveLength(2);
     const light = metas.find((m) => m.includes("(prefers-color-scheme: light)"));
@@ -113,6 +114,11 @@ describe("index.html 的 PWA 標記（#336）", () => {
     expect(light).toContain(`content="${readManifest().theme_color}"`);
     expect(readManifest().theme_color.toLowerCase()).toBe(backgroundHexes[0]);
     expect(dark?.toLowerCase()).toContain(`content="${backgroundHexes[1]}"`);
+  });
+
+  it("原始 head（含註解）裡 `<script` 恰出現一次——security-headers.ts 的 INLINE_SCRIPT 對未剝註解的 HTML 算 hash，註解裡的 `<script …>` 字面也會被吃進去", () => {
+    const rawHead = indexHtml.slice(indexHtml.indexOf("<head>"), indexHtml.indexOf("</head>"));
+    expect(rawHead.match(/<script/gi) ?? []).toHaveLength(1);
   });
 
   it("仍只有一段 inline script（theme.test.tsx 只抓第一段驗防閃；新增 PWA 標記不得多出 inline script）", () => {
