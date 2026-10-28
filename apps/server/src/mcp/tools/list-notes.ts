@@ -32,6 +32,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { UUID_RE } from "../../notes/service.js";
 import { noNul } from "../../notes/schemas.js";
 import { noteSummarySchema, toNoteSummary } from "../dto.js";
+import { BAD_CURSOR_MESSAGE } from "../keyset-cursor.js";
 import { MCP_PAGE_MAX } from "../limits.js";
 import { buildNoteListQuery, type NoteListCursor } from "../queries.js";
 import { toolError, toolResult } from "../tool-result.js";
@@ -120,7 +121,7 @@ export async function listNotes(args: ListNotesArgs, ctx: McpToolCtx): Promise<C
   if (args.cursor !== undefined) {
     cursor = decodeCursor(args.cursor);
     if (cursor === null) {
-      return toolError("invalid_body", "The `cursor` value is not one this server issued. Omit it to start over.");
+      return toolError("invalid_body", BAD_CURSOR_MESSAGE);
     }
   }
 

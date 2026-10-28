@@ -21,6 +21,7 @@ import { buildSnippet } from "../../notes/search-snippet.js";
 import { noteSummarySchema, toNoteSummary, type NoteSummaryForModel } from "../dto.js";
 import { MCP_SEARCH_WIRE_BUDGET, MCP_SNIPPET_MAX, MCP_TEXT_MAX, escapedLength, truncateText } from "../limits.js";
 import { toolError, toolResult } from "../tool-result.js";
+import { wireCost } from "../wire-budget.js";
 import type { McpToolCtx } from "../context.js";
 
 const DEFAULT_LIMIT = 20;
@@ -104,12 +105,6 @@ export interface SearchMatchForModel {
 
 type MatchedOn = "title" | "body" | "both";
 type SearchHitForModel = NoteSummaryForModel & { matchedOn: MatchedOn; matches: SearchMatchForModel[] };
-
-/** 一個值在 wire 上的成本：structuredContent 一份＋鏡像 text 一份（再被逃脫一次，`mcp/tool-result.ts`）。 */
-const wireCost = (v: unknown): number => {
-  const j = JSON.stringify(v);
-  return j.length + JSON.stringify(j).length;
-};
 
 export function assembleSearchPayload(
   notes: SearchHitForModel[],
