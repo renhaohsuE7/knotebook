@@ -296,6 +296,22 @@ describe("FolderMenu", () => {
     expect(item).toHaveAttribute("aria-disabled", "true");
   });
 
+  it("FM12 從 ⋮ 開框（含 chunk 已快取的第二次起）：輸入框拿到焦點，選單關閉時不把焦點搶回 ⋮", async () => {
+    stubServer({ folders: [A] });
+    renderList();
+    for (const item of ["Rename", "New subfolder", "Rename"]) {
+      fireEvent.click(within(await openMenu("A")).getByRole("menuitem", { name: item }));
+      const input = await screen.findByRole("textbox", { name: "Folder name" });
+      await waitFor(() => expect(input).toHaveFocus());
+      // 再讓出兩輪：Radix 選單卸載後的還焦點若會搶，在這裡出現
+      for (let i = 0; i < 2; i++) await act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+      expect(input).toHaveFocus();
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await waitFor(() => expect(screen.getByRole("button", { name: "Folder menu for A" })).toHaveFocus());
+    }
+  });
+
   it("FM9 zh：可及名稱「A 的資料夾選單」、三個排序字、「已達最多 5 層」", async () => {
     await i18n.changeLanguage("zh-TW");
     stubServer({ folders: folderChain("L", 5) });

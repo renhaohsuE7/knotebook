@@ -141,6 +141,16 @@ export function FolderMenu({
     action();
   }
 
+  /**
+   * 開對話框的項目：選單關閉時不把焦點還給 ⋮。對話框（chunk 已快取時）會在選單卸載前就掛上並把焦點給輸入框，
+   * Radix 選單卸載時的還焦點再把它搶回 ⋮（真 Chromium 重現：第二次開框起輸入框都失焦）。關框後焦點回 ⋮ 由 host 的 `returnFocusRef` 負責。
+   */
+  const openingDialogRef = useRef(false);
+  function openDialog(request: FolderDialogRequest): void {
+    openingDialogRef.current = true;
+    run(() => onRequest(request, triggerRef.current));
+  }
+
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
@@ -155,7 +165,14 @@ export function FolderMenu({
           <EllipsisVertical aria-hidden="true" className="h-3.5 w-3.5" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent
+        align="end"
+        onCloseAutoFocus={(event) => {
+          if (!openingDialogRef.current) return;
+          openingDialogRef.current = false;
+          event.preventDefault();
+        }}
+      >
         {showNewNote && (
           <MenuAction icon={FilePlus} label={t("folders.menu.newNote")} blockedReason={null} disabled={createNotePending} onRun={() => run(onCreateNote)} />
         )}
@@ -164,7 +181,7 @@ export function FolderMenu({
             icon={FolderPlus}
             label={t("folders.menu.newSubfolder")}
             blockedReason={depth >= FOLDER_DEPTH_MAX ? t("folders.menu.depthLimit", { max: FOLDER_DEPTH_MAX }) : null}
-            onRun={() => run(() => onRequest({ kind: "create", parent: { folderId: folder.id } }, triggerRef.current))}
+            onRun={() => openDialog({ kind: "create", parent: { folderId: folder.id } })}
           />
         )}
         {showManage && (
@@ -172,7 +189,7 @@ export function FolderMenu({
             icon={Pencil}
             label={t("folders.menu.rename")}
             blockedReason={null}
-            onRun={() => run(() => onRequest({ kind: "rename", folder }, triggerRef.current))}
+            onRun={() => openDialog({ kind: "rename", folder })}
           />
         )}
         {(showNewNote || showManage) && <DropdownMenuSeparator />}
@@ -199,7 +216,7 @@ export function FolderMenu({
         </DropdownMenuRadioGroup>
         {showManage && <DropdownMenuSeparator />}
         {showManage && (
-          <DeleteAction folder={folder} hasLiveNotes={hasLiveNotes} onRun={() => run(() => onRequest({ kind: "delete", folder }, triggerRef.current))} />
+          <DeleteAction folder={folder} hasLiveNotes={hasLiveNotes} onRun={() => openDialog({ kind: "delete", folder })} />
         )}
       </DropdownMenuContent>
     </DropdownMenu>
