@@ -93,7 +93,14 @@ export const MCP_MAX_WIRE = 262_144;
  * 34 618、讀寫搬移十一支 32 998、讀寫十支 30 491、唯讀七支 18 271（相對 #239 的 29 437／26 930／15 383：list_trash 讓每一組各多一支，
  * 兩支新工具讓 RWM → RWMD 再多 4 127）。依原配方重訂：37 125 向上取整到 1024 的倍數＝37 888 → ×1.3 ＝ 49 254.4 → 進位 **49 300**。
  *
- * 最近一次依原配方重訂：2026-10-26（#181 PR-2d，見上；前一次 2026-10-10 是 #180＋#200 PR2）；下次逼近時同樣回頭重訂連同推導，不是逕自調大。
+ * **#folders PR-3d T6（2026-10-29，feat/folders-mcp，T5 之上）：讀寫搬移刪除憑證十七支**（T2 起 `noteSummarySchema` 多 `folder`、T3 `list_notes` 多
+ * `pageCutShort`、T4 `list_trash` 多 `cursor`／`folderPath` 等欄、T5 加 `list_folders`、T6 加 `create_folder`／`rename_folder`／`move_folder`）。
+ * 實測讀寫搬移刪除十七支 wire ＝ **52 043**（舊門檻 49 300 的 105.6%，破線，照 plan 讀碼發現 24 當場重訂）；對照組：讀寫刪除十六支 49 089、
+ * 讀寫搬移十五支 47 338、讀寫十四支 44 384、唯讀八支 24 004（T5 後十四支是 44 777，三支資料夾寫入工具＋共用的 folder schema 讓它多 7 266）。
+ * 依原配方重訂：52 043 向上取整到 1024 的倍數＝52 224 → ×1.3 ＝ 67 891.2 → 進位 **67 900**。T7（`move_note_to_folder` 與三支 `folder_id`）、
+ * T8（`delete_folder`）還會再加；T9 做最後一次重訂與棚內突變。
+ *
+ * 最近一次依原配方重訂：2026-10-29（#folders PR-3d T6，見上；前一次 2026-10-26 是 #181 PR-2d）；下次逼近時同樣回頭重訂連同推導，不是逕自調大。
  *
  * **什麼樣的迴歸會撞牆**（**突變實跑，2026-09-09**）：把 `edit_note` 的 `if_match`
  * 欄位 `.describe()` 加長 6000 字元（`"x".repeat(6000)` 接在句尾）→ wire 變成 **21 362**，
@@ -109,7 +116,7 @@ export const MCP_MAX_WIRE = 262_144;
  * #181 PR-2d 追記（**突變實跑，2026-10-26**，門檻 49 300、基線 37 125）：把 `delete_note` 的 description 加長
  * `N_LIST_MAX − W + 100` ＝ 12 275 字元（`x`，接在句尾）→ **49 400**，紅（`expected 49400 to be less than or equal to 49300`）；已 revert（棚內突變，md5 還原確認）。
  */
-export const N_LIST_MAX = 49_300;
+export const N_LIST_MAX = 67_900;
 
 /**
  * 案 (vii) 第一發（#181 `list_trash` 最壞形）的下界哨兵。2026-10-26 實測 **236 598**（群組名 80 個 `"`；第二發 67＋13 形 247 498；
@@ -319,28 +326,28 @@ describe("#108 tools/list 的脈絡成本（案 11b）", () => {
 
     const rwRes = await mcpPost(ctx.app, rpc("tools/list"), { token: rwToken });
     expect(rwRes.statusCode).toBe(200);
-    expect((rwRes.json().result.tools as unknown[]).length).toBe(11);
+    expect((rwRes.json().result.tools as unknown[]).length).toBe(14);
     const rwWire = rwRes.body.length;
 
     const rwmRes = await mcpPost(ctx.app, rpc("tools/list"), { token: rwmToken });
     expect(rwmRes.statusCode).toBe(200);
-    expect((rwmRes.json().result.tools as unknown[]).length).toBe(12);
+    expect((rwmRes.json().result.tools as unknown[]).length).toBe(15);
     const rwmWire = rwmRes.body.length;
 
     const rwdRes = await mcpPost(ctx.app, rpc("tools/list"), { token: rwdToken });
     expect(rwdRes.statusCode).toBe(200);
-    expect((rwdRes.json().result.tools as unknown[]).length).toBe(13);
+    expect((rwdRes.json().result.tools as unknown[]).length).toBe(16);
     const rwdWire = rwdRes.body.length;
 
     const rwmdRes = await mcpPost(ctx.app, rpc("tools/list"), { token: rwmdToken });
     expect(rwmdRes.statusCode).toBe(200);
-    expect((rwmdRes.json().result.tools as unknown[]).length).toBe(14);
+    expect((rwmdRes.json().result.tools as unknown[]).length).toBe(17);
     const rwmdWire = rwmdRes.body.length;
 
     console.log(
-      `[案 11b] tools/list  唯讀憑證（八支，對照）wire=${roWire}  讀寫憑證（十一支，對照）wire=${rwWire}  ` +
-        `讀寫搬移憑證（十二支，對照）wire=${rwmWire}  讀寫刪除憑證（十三支，對照）wire=${rwdWire}  ` +
-        `讀寫搬移刪除憑證（十四支，被測）wire=${rwmdWire}  門檻=${N_LIST_MAX}  用掉 ${((rwmdWire / N_LIST_MAX) * 100).toFixed(1)}%`
+      `[案 11b] tools/list  唯讀憑證（八支，對照）wire=${roWire}  讀寫憑證（十四支，對照）wire=${rwWire}  ` +
+        `讀寫搬移憑證（十五支，對照）wire=${rwmWire}  讀寫刪除憑證（十六支，對照）wire=${rwdWire}  ` +
+        `讀寫搬移刪除憑證（十七支，被測）wire=${rwmdWire}  門檻=${N_LIST_MAX}  用掉 ${((rwmdWire / N_LIST_MAX) * 100).toFixed(1)}%`
     );
     expect(rwmdWire).toBeLessThanOrEqual(N_LIST_MAX);
   });
