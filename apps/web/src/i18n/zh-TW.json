@@ -43,6 +43,7 @@
     "locationGroup": "工作坊 › {{group}}",
     "locationShared": "與我共享 · {{role}}",
     "locationSharedIn": "與我共享 › {{path}} · {{role}}",
+    "folderEmpty": "沒有筆記",
     "trash": "垃圾桶"
   },
   "roles": {

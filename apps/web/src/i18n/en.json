@@ -43,6 +43,7 @@
     "locationGroup": "Workspace › {{group}}",
     "locationShared": "Shared with me · {{role}}",
     "locationSharedIn": "Shared with me › {{path}} · {{role}}",
+    "folderEmpty": "No notes",
     "trash": "Trash"
   },
   "roles": {
