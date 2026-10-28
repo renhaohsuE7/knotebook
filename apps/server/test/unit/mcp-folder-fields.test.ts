@@ -32,10 +32,12 @@ import {
   folderNameErrorMessage,
   type FolderTool,
 } from "../../src/mcp/folder-messages.js";
-import { BAD_CURSOR_MESSAGE, decodeKeysetCursor, encodeKeysetCursor } from "../../src/mcp/keyset-cursor.js";
+import { BAD_CURSOR_MESSAGE, decodeKeysetCursor, encodeKeysetCursor, parseCursorTimestamp } from "../../src/mcp/keyset-cursor.js";
 import { MCP_FOLDER_PATH_MAX } from "../../src/mcp/limits.js";
 import { NOTE_NOT_FOUND_MESSAGE } from "../../src/mcp/note-read.js";
-import { countWithinWireBudget, wireCost } from "../../src/mcp/wire-budget.js";
+import { LIST_BASE_COST } from "../../src/mcp/tools/list-notes.js";
+import { TRASH_BASE_COST } from "../../src/mcp/tools/list-trash.js";
+import { PAGE_CUT_RESERVE, countWithinWireBudget, wireCost } from "../../src/mcp/wire-budget.js";
 import { WRITE_RATE_LIMITED_MESSAGE } from "../../src/mcp/write-messages.js";
 
 const Q = '"';
@@ -214,6 +216,42 @@ describe("KC1 keyset 游標", () => {
 
   it("BAD_CURSOR_MESSAGE 與 list_notes 原句同字", () => {
     expect(BAD_CURSOR_MESSAGE).toBe("The `cursor` value is not one this server issued. Omit it to start over.");
+  });
+});
+
+describe("KC2 parseCursorTimestamp（T4 審查 N1）", () => {
+  it("本站發的 toISOString 形 → Date；超範圍年份、年 0、寬鬆格式、溢位日期、非日期、接 NUL → null", () => {
+    const ok = "2026-10-28T01:02:03.456Z";
+    expect(parseCursorTimestamp(ok)!.toISOString()).toBe(ok);
+    for (const bad of [
+      "+275760-09-13T00:00:00.000Z",
+      "-000001-01-01T00:00:00.000Z",
+      "0000-01-01T00:00:00.000Z",
+      "2026",
+      "2026-10-28T01:02:03Z",
+      "2026-02-30T00:00:00.000Z",
+      "not-a-date",
+      `${ok}${NUL}`,
+    ]) {
+      expect(parseCursorTimestamp(bad), bad).toBeNull();
+    }
+  });
+});
+
+describe("BC1 清單預算的固定部分（T4 審查 M2）", () => {
+  // 拿掉佔位游標或 PAGE_CUT_RESERVE，回應就可能超出預算一點點（每項 +2 的上界吃掉大部分，殺不到）——這裡直接釘組成。
+  it("LIST_BASE_COST＝空頁＋82 字元游標＋保留；不小於帶 pageCutShort 的最大空頁成本", () => {
+    const realCursorLen = Buffer.from(`2026-10-28T01:02:03.456Z|${ID}`, "utf8").toString("base64url").length;
+    expect(realCursorLen).toBe(82);
+    expect(LIST_BASE_COST).toBe(wireCost({ notes: [], nextCursor: "x".repeat(82) }) + PAGE_CUT_RESERVE);
+    expect(LIST_BASE_COST).toBeGreaterThanOrEqual(wireCost({ notes: [], nextCursor: "x".repeat(82), pageCutShort: true }));
+  });
+
+  it("TRASH_BASE_COST＝空頁＋84 字元游標＋truncated＋retentionDays 3650＋保留；不小於帶 pageCutShort 的最大空頁成本", () => {
+    expect(encodeKeysetCursor("t", ["2026-10-28T01:02:03.456Z", ID])).toHaveLength(84);
+    const empty = { retentionDays: 3650, items: [], truncated: true, nextCursor: "x".repeat(84) };
+    expect(TRASH_BASE_COST).toBe(wireCost(empty) + PAGE_CUT_RESERVE);
+    expect(TRASH_BASE_COST).toBeGreaterThanOrEqual(wireCost({ ...empty, pageCutShort: true }));
   });
 });
 

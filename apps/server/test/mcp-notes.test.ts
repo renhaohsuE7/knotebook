@@ -213,6 +213,8 @@ describe("#108 list_notes", () => {
       //     所以三關只剩 `noNul` 擋得住它。
       // 突變實測（2026-09-07）：拿掉 `if (!noNul(decoded))` → **只有這一發紅**
       // （`isError` 變 `undefined`、回了一整頁筆記——日期取未來值，keyset 述詞會放行全部）。
+      // ⚠ 資料夾 PR-3d T4 起時間段改走 `parseCursorTimestamp`（格式＋往返），這一發也會被它擋下：
+      // 拿掉 `noNul` 不再讓這一發變綠，`noNul` 對這個落點已不是唯一守衛（`list-notes.ts` 的 decodeCursor 註解同步）。
       encode(`2099-01-01T00:00:00.000Z${NUL}|${randomUUID()}`),
     ];
     for (const cursor of bad) {
@@ -224,6 +226,20 @@ describe("#108 list_notes", () => {
     // 對照面：合法 cursor 仍然成功——上面四發不是「任何 cursor 都被拒」。
     const first = payloadOf(await callTool(ctx.app, token, "list_notes", { limit: 1 }));
     expect(payloadOf(await callTool(ctx.app, token, "list_notes", { cursor: first.nextCursor! }))).toBeTruthy();
+  });
+
+  // 資料夾 PR-3d T4 審查 N1：JS `new Date` 收、pg `::timestamptz` 解析不了的時間段，原本落成 internal。
+  it("時間段不是本站發的形（+275760-…、-000001-…、0000-…、寬鬆的 2026）→ invalid_body，不是 internal", async () => {
+    const ctx = await buildCollabTestApp();
+    const { ownerId, token } = await scenario(ctx);
+    await ctx.createNote(ownerId, "One");
+    const encode = (s: string): string => Buffer.from(s, "utf8").toString("base64url");
+    for (const ts of ["+275760-09-13T00:00:00.000Z", "-000001-01-01T00:00:00.000Z", "0000-01-01T00:00:00.000Z", "2026"]) {
+      const call = await callTool(ctx.app, token, "list_notes", { cursor: encode(`${ts}|${randomUUID()}`) });
+      expect(call.status).toBe(200);
+      expect(call.result.isError, ts).toBe(true);
+      expect(call.result.structuredContent, ts).toEqual({ code: "invalid_body", message: "The `cursor` value is not one this server issued. Omit it to start over." });
+    }
   });
 
   it("title 截到逃脫後 200 並附 titleTruncated（M16）", async () => {

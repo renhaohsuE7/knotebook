@@ -29,6 +29,7 @@ import { getContent, seedContent, seedTokenForUser } from "./editing-helpers.js"
 import { mcpPost, rpc } from "./mcp-helpers.js";
 import { seedUpload } from "./copy-helpers.js";
 import { cookieOf, seedGroup } from "./group-helpers.js";
+import { seedFolderChain, setNoteFolder } from "./folder-helpers.js";
 import { wireCost } from "../src/mcp/wire-budget.js";
 import { markTrashed } from "./trash-helpers.js";
 import type { Db } from "../src/db/index.js";
@@ -114,6 +115,8 @@ export const N_LIST_MAX = 49_300;
  * 案 (vii) 第一發（#181 `list_trash` 最壞形）的下界哨兵。2026-10-26 實測 **236 598**（群組名 80 個 `"`；第二發 67＋13 形 247 498；
  * 恰好 100 篇時 `truncated:false` 比 `true` 多 1 字元、鏡像兩份再多 2 → **247 500**，餘裕 ×1.06，剩 14 644）。落到 230 000 以下代表
  * 測資沒造滿（刪除者或群組沒帶上、標題沒截到逃脫後 200），或 `truncateText` 截得比「逃脫後 200」還兇——回頭查 fixture，不要改這個數字遷就（用意同 MIN_WORST_GROUP_WIRE）。
+ * 資料夾 PR-3d T4 起 `list_trash` 依預算截頁、每項另帶 `folderPath`（(vii) 每篇放在最壞的五層路徑），單頁不會再超過預算，所以改量
+ * 「全部頁的 items 逐項 `wireCost` 合計」：101 項約 3 761 × 101 ≈ 38 萬，遠高於 230 000；低於它代表 fixture 沒造滿（同上）。
  */
 const MIN_WORST_TRASH_WIRE = 230_000;
 
@@ -178,6 +181,39 @@ async function pageAllNotes(app: FastifyInstance, token: string, label: string, 
     cursor = result.structuredContent.nextCursor;
   }
   throw new Error("list_notes 翻了 20 頁還沒到底");
+}
+
+type ListTrashPage = {
+  items: Array<Record<string, unknown> & { id: string; folderPathTruncated?: true }>;
+  truncated: boolean;
+  nextCursor: string | null;
+  pageCutShort?: true;
+};
+
+/** 資料夾 PR-3d T4：`list_trash` 從頭翻到 `nextCursor` 為 null；每頁 wire ≤ N、payload ≤ 預算、`truncated` ≡ `nextCursor !== null`。 */
+async function pageAllTrash(app: FastifyInstance, token: string, label: string): Promise<{ pages: ListTrashPage[]; wires: number[] }> {
+  const pages: ListTrashPage[] = [];
+  const wires: number[] = [];
+  let cursor: string | undefined;
+  for (let i = 1; i <= 20; i += 1) {
+    const res = await mcpPost(app, rpc("tools/call", { name: "list_trash", arguments: cursor === undefined ? {} : { cursor } }), { token });
+    expect(res.statusCode).toBe(200);
+    const result = res.json().result as { isError?: true; structuredContent: ListTrashPage };
+    expect(result.isError).toBeUndefined();
+    const wire = res.body.length;
+    const pageLabel = `${label} 第 ${i} 頁`;
+    measured.push({ label: pageLabel, wire });
+    console.log(`[案 11c] ${pageLabel.padEnd(46)} wire=${String(wire).padStart(7)}  餘裕 ×${(MCP_MAX_WIRE / wire).toFixed(1)}`);
+    expect(wire).toBeLessThanOrEqual(MCP_MAX_WIRE);
+    expect(wireCost(result.structuredContent)).toBeLessThanOrEqual(MCP_LIST_WIRE_BUDGET);
+    const page = result.structuredContent;
+    expect(page.truncated).toBe(page.nextCursor !== null);
+    pages.push(page);
+    wires.push(wire);
+    if (page.nextCursor === null) return { pages, wires };
+    cursor = page.nextCursor;
+  }
+  throw new Error("list_trash 翻了 20 頁還沒到底");
 }
 
 /** 同一人 cookie 的 `GET /api/notes`（依微秒排；只比集合）。 */
@@ -509,11 +545,6 @@ describe("#108 單次回應大小（案 11c／M16）", () => {
     await callWire(ctx.app, rwToken, "(iv) create_note（群組形）", "create_note", { title: '"'.repeat(1000), group_id: g.id });
   });
 
-  /**
-   * LN4（資料夾 PR-3d T3）：截頁的游標落在同一毫秒的一對上。先把 (iv) 的 100 篇依原順序各拉開 2 ms（內容不變），翻一次找出第一頁的截點 k；
-   * 再把第 k、k+1 篇設成同一毫秒、差 1 µs，**µs 序與 id 序相反**（µs 較大的給 id 較小者）：REST（微秒）與 MCP（毫秒＋id）在這一對上順序相反，
-   * 游標若用微秒或非排序鍵就會漏掉其中一篇。
-   */
   // (iv-b)（T3 審查 I1）：多一篇讓 `limit + 1` 那列存在（hasMore = true），截頁這條路徑在「本來就還有下一頁」時也要走到。
   it("(iv-b) 101 篇最壞群組筆記、limit 100（查詢多取的那列存在）→ 第一頁照樣依大小截、有 nextCursor；續翻到底與 REST 同一組 101 篇", async () => {
     const ctx = await buildCollabTestApp();
@@ -525,6 +556,11 @@ describe("#108 單次回應大小（案 11c／M16）", () => {
     expectPagedSameAsRest(pages, await restNoteIds(ctx.app, o.id), MCP_PAGE_MAX + 1);
   });
 
+  /**
+   * LN4（資料夾 PR-3d T3）：截頁的游標落在同一毫秒的一對上。先把 (iv) 的 100 篇依原順序各拉開 2 ms（內容不變），翻一次找出第一頁的截點 k；
+   * 再把第 k、k+1 篇設成同一毫秒、差 1 µs，**µs 序與 id 序相反**（µs 較大的給 id 較小者）：REST（微秒）與 MCP（毫秒＋id）在這一對上順序相反，
+   * 游標若用微秒或非排序鍵就會漏掉其中一篇。
+   */
   it("LN4 毫秒邊界：第一頁末篇與第二頁首篇同一毫秒、µs 序與 id 序相反 → 續翻不漏不重", async () => {
     const ctx = await buildCollabTestApp();
     const { o, g } = await seedWorstGroupNotes(ctx);
@@ -626,29 +662,51 @@ describe("#108 單次回應大小（案 11c／M16）", () => {
    * wire／預算比最大）、`handle` 32、群組形（`group` 物件）、`retentionDays` 3650（`purgeAt` 非 null）。
    * 第一發照 plan 用群組名 80 個 `"`（不截）；第二發換成 (iv) 的 67 個 `"` ＋ 13 個 U+0001（截過＋`nameTruncated`，群組名的真正最壞形）。
    * 突變（`toTrashItemForModel` 不截標題、outputSchema 同時放寬；2026-10-26 實跑）→ 第一發 351 998 > N，紅。
+   * 資料夾 PR-3d T4：每篇放在五層 `[33,40,40,40,41]` 個 `"` 的群組資料夾鏈最深處（plan 讀碼發現 2 的嚴格最壞路徑），每項另帶 `folderPath`；
+   * `list_trash` 依預算截頁，所以三發都翻到底：每頁 ≤ N 且 payload ≤ 預算、`truncated` ≡ `nextCursor !== null`，第一頁截點貼近預算
+   * （wire > 預算 − 4 000＝fixture 夠壞）。第三發（LT-PC）把 31 篇還原成活筆記、剩 70 篇：被預算截但查詢沒有下一列（hasMore false），
+   * 第一頁仍要 `truncated: true`、有 `nextCursor`（殺「`truncated` 改回 hasMore」）。
    * `delete_note`／`restore_note` 各量一發（同一篇、最壞標題；`restore_note` 回的是 noteSummary 形，群組名是第二發那個）。
    * 實測見 `[案 11c]` 那幾行 log。
    */
-  it("(vii) #181 list_trash：101 篇最壞垃圾桶群組筆記（標題、刪除者名各 300 個 `\"`，handle 32，保留 3650 天）→ ≤ N；delete_note／restore_note 最壞標題 → ≤ N", async () => {
+  it("(vii) #181 list_trash：101 篇最壞垃圾桶群組筆記（標題、刪除者名各 300 個 `\"`，handle 32，保留 3650 天，五層最壞路徑）→ 依大小截頁、每頁 ≤ N；delete_note／restore_note 最壞標題 → ≤ N", async () => {
     const ctx = await buildCollabTestApp();
     const o = await owner(ctx);
     const handle = `h${"a".repeat(31)}`;
     await ctx.db.update(users).set({ handle, displayName: '"'.repeat(300) }).where(eq(users.id, o.id));
     await ctx.db.$client.query(`update site_settings set trash_retention_days = 3650`);
     const g = await seedGroup(ctx.db, '"'.repeat(80), [{ userId: o.id, role: "admin" }]);
+    const chain = await seedFolderChain(ctx.db, { group: g.id }, [33, 40, 40, 40, 41].map(n => '"'.repeat(n)));
     const ids: string[] = [];
     for (let i = 0; i < MCP_PAGE_MAX + 1; i += 1) {
       const n = String(i).padStart(4, "0");
       const id = await seedMaxNote(ctx.db, { groupId: g.id }, o.id, { title: '"'.repeat(300), slug: `${n}-${"s".repeat(95)}`, agentLabel: "g".repeat(32) });
+      await setNoteFolder(ctx.db.$client, id, chain.at(-1)!);
       await markTrashed(ctx.db.$client, id, o.id);
       ids.push(id);
     }
-    const wire = await callWire(ctx.app, o.token, "(vii) list_trash 101 篇（群組名 80 個 \"）", "list_trash", {});
-    expect(wire).toBeGreaterThan(MIN_WORST_TRASH_WIRE); // 「測資沒造滿／截過頭」的哨兵，見常數註解
+    const shot = async (label: string, total: number) => {
+      const { pages, wires } = await pageAllTrash(ctx.app, o.token, label);
+      expect(pages[0]!.pageCutShort).toBe(true);
+      expect(wires[0]!).toBeGreaterThan(MCP_LIST_WIRE_BUDGET - 4_000); // 截點貼近預算＝fixture 夠壞
+      const items = pages.flatMap(p => p.items);
+      expect(new Set(items.map(i => i.id)).size).toBe(total);
+      expect(items[0]!.folderPathTruncated).toBe(true); // 前提：真的帶上最壞路徑
+      return { pages, sum: items.reduce((s, i) => s + wireCost(i), 0) };
+    };
+    const first = await shot("(vii) list_trash 101 篇（群組名 80 個 \"）", MCP_PAGE_MAX + 1);
+    expect(first.sum).toBeGreaterThan(MIN_WORST_TRASH_WIRE); // 「測資沒造滿／截過頭」的哨兵，見常數註解
 
     await ctx.db.update(groups).set({ name: `${'"'.repeat(67)}${"\u0001".repeat(13)}` }).where(eq(groups.id, g.id));
-    const wire2 = await callWire(ctx.app, o.token, "(vii) list_trash 101 篇（群組名 67+13）", "list_trash", {});
-    expect(wire2).toBeGreaterThan(wire); // 群組名真的換成截過的形（沒換到就是重量第一發）
+    const second = await shot("(vii) list_trash 101 篇（群組名 67+13）", MCP_PAGE_MAX + 1);
+    // 群組名真的換成截過的形（沒換到就是重量第一發）。截頁後單頁 wire 都貼著預算，比不出差別，所以比全部項目的合計成本。
+    expect(second.sum).toBeGreaterThan(first.sum);
+
+    // LT-PC：剩 70 篇（> 一頁放得下的、≤ 100）→ 被預算截，但查詢沒有下一列；第一頁照樣 truncated＋nextCursor，翻到底時 truncated false。
+    await ctx.db.$client.query(`update notes set deleted_at = null, deleted_by = null where id = any($1::uuid[])`, [ids.slice(70)]);
+    const pc = await shot("(vii) LT-PC list_trash 70 篇", 70);
+    expect([pc.pages[0]!.truncated, pc.pages[0]!.nextCursor !== null]).toEqual([true, true]);
+    expect(pc.pages.at(-1)!.truncated).toBe(false);
 
     const { token: rwmdToken } = await seedTokenForUser(ctx.db, o.id, "notes:read notes:write notes:move notes:delete");
     await callWire(ctx.app, rwmdToken, "(vii) restore_note（最壞標題）", "restore_note", { note_id: ids[0] });

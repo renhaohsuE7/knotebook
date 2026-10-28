@@ -32,7 +32,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { UUID_RE } from "../../notes/service.js";
 import { noNul } from "../../notes/schemas.js";
 import { noteSummariesForModel, noteSummarySchema } from "../dto.js";
-import { BAD_CURSOR_MESSAGE } from "../keyset-cursor.js";
+import { BAD_CURSOR_MESSAGE, parseCursorTimestamp } from "../keyset-cursor.js";
 import { MCP_PAGE_MAX } from "../limits.js";
 import { buildNoteListQuery, type NoteListCursor } from "../queries.js";
 import { toolError, toolResult } from "../tool-result.js";
@@ -99,20 +99,18 @@ function encodeCursor(row: { updatedAtMs: Date; id: string }): string {
 
 /** 預算的固定部分：空頁＋一個長度與真游標相同的佔位游標（82）＋`pageCutShort` 的保留。 */
 const CURSOR_PLACEHOLDER = encodeCursor({ updatedAtMs: new Date("2026-01-01T00:00:00.000Z"), id: "00000000-0000-0000-0000-000000000000" });
-const LIST_BASE_COST = wireCost({ notes: [], nextCursor: CURSOR_PLACEHOLDER }) + PAGE_CUT_RESERVE;
+export const LIST_BASE_COST = wireCost({ notes: [], nextCursor: CURSOR_PLACEHOLDER }) + PAGE_CUT_RESERVE;
 
 /**
  * 不變量 S 的前兩關（第三關是 drizzle 的參數化）。base64url 解碼對垃圾輸入不丟例外、只會
- * 回一串垃圾，所以格式關不能省：少了 `UUID_RE` 或日期有效性檢查，垃圾就會進 keyset 述詞，
+ * 回一串垃圾，所以格式關不能省：少了 `UUID_RE` 或時間段的格式檢查，垃圾就會進 keyset 述詞，
  * pg 報型別錯 → 模型收到 `internal` 而不是「你的游標壞了」。
  *
- * ⚠ **`noNul` 這一關是真的守衛，不是裝飾**（本檔一度自陳「結構上做不出有鑑別力的測試」——
- * **那句是錯的，2026-09-07 推翻**）。關鍵是 NUL 的**落點**：
- *   - 落在 id 欄 → 先被 `UUID_RE` 擋掉，`noNul` 拿掉也不會有測試變紅；
- *   - **接在時間戳後面 → `new Date("…Z" + NUL)` 仍然有效**（實測 `toISOString()` 原樣回傳），
- *     `UUID_RE` 又只管 id 欄——三關裡只剩 `noNul` 擋得住它。拿掉它，那發游標會**成功**
- *     回一整頁筆記。
- * 守衛＝`mcp-notes.test.ts` 的「壞 cursor 四發」第四發（突變實測：拿掉這一行只有它紅）。
+ * 時間段走 `parseCursorTimestamp`（資料夾 PR-3d T4 審查 N1）：只收本站發的四位數年份 ISO 形並做往返檢查——
+ * 原本的 `new Date(ts)` 會收 `+275760-…` 這類 JS 有效、pg 解析不了的形，落成 `internal`。
+ * ⚠ `noNul` 那一關：NUL 接在時間戳後面（`…Z` + NUL）時，2026-09-07 的實測是三關裡只有 `noNul` 擋得住
+ * （`new Date` 收它）。改走 `parseCursorTimestamp` 之後格式檢查也擋得住，`noNul` 對那個落點不再是唯一守衛；
+ * 留著它是因為它同時擋 id 欄以外的任何落點，成本為零。守衛＝`mcp-notes.test.ts` 的「壞 cursor 四發」第四發。
  */
 function decodeCursor(raw: string): NoteListCursor | null {
   const decoded = Buffer.from(raw, "base64url").toString("utf8");
@@ -121,8 +119,8 @@ function decodeCursor(raw: string): NoteListCursor | null {
   if (parts.length !== 2) return null;
   const [ts, id] = parts as [string, string];
   if (!UUID_RE.test(id)) return null;
-  const updatedAt = new Date(ts);
-  if (Number.isNaN(updatedAt.getTime())) return null;
+  const updatedAt = parseCursorTimestamp(ts);
+  if (updatedAt === null) return null;
   return { updatedAt, id };
 }
 

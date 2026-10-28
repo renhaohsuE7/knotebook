@@ -26,5 +26,20 @@ export function decodeKeysetCursor(raw: string, tag: "t" | "f", n: number): stri
   return parts.slice(1);
 }
 
+const CURSOR_ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/**
+ * 游標裡的時間段（本站只發 `Date#toISOString()` 的四位數年份形）→ Date；不是那個形就 null。
+ * 往返檢查（`toISOString() === ts`）擋掉寬鬆格式與溢位的日期；四位數年份且 ≥ 1 擋掉 `+275760-…`、`-000001-…`、`0000-…` 這類
+ * JS 收、pg `::timestamptz` 不收（或語意不同）的形——不擋的話它們會進 keyset 述詞，pg 報錯 → 模型收到 `internal` 而不是「游標壞了」。
+ * `list_notes`、`list_trash`（與之後的 `list_folders`）共用。
+ */
+export function parseCursorTimestamp(ts: string): Date | null {
+  if (!CURSOR_ISO_RE.test(ts)) return null;
+  const at = new Date(ts);
+  if (Number.isNaN(at.getTime()) || at.toISOString() !== ts || at.getUTCFullYear() < 1) return null;
+  return at;
+}
+
 /** 自 list-notes.ts 抽出的同一句（list_notes 改引用它，字面不變）。 */
 export const BAD_CURSOR_MESSAGE = "The `cursor` value is not one this server issued. Omit it to start over.";

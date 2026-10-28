@@ -20,8 +20,10 @@ export const RESTORE_NOTE_DESCRIPTION =
   "Bring a note back from the trash. It appears in list_notes and search_notes again, and the per-person shares and public link it " +
   "kept while in the trash work again. A note whose group was deleted with its notes handed over to one of its admins comes back as " +
   "that admin's personal note, with a different owner and URL — see `url` in the reply. Works on notes in your trash: your own " +
-  "personal notes, and notes of groups where your role can both edit and delete notes. Replies with the note in the same shape " +
-  "list_notes returns.";
+  "personal notes, and notes of groups where your role can both edit and delete notes. " +
+  // 資料夾 PR-3d（RN+）：講的是 list_trash 的 folderPath。
+  "It usually goes back into the folder that list_trash shows as its `folderPath`, re-creating folders on that path that are missing. " +
+  "Replies with the note in the same shape list_notes returns.";
 
 export const restoreNoteInput = {
   note_id: NOTE_ID.describe("The id of a note in the trash, as returned by list_trash or by delete_note's reply."),
