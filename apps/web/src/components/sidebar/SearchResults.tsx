@@ -7,6 +7,7 @@ import { useGroups } from "@/api/groups";
 import { useNotes } from "@/api/notes";
 import { useActiveNote } from "@/lib/active-note";
 import { cn } from "@/lib/utils";
+import { EMPTY_FOLDER_INDEX } from "@/components/sidebar/folder-index";
 import { noteLocationLabel } from "@/components/sidebar/tree";
 
 /**
@@ -87,7 +88,7 @@ export function SearchResults({ query }: { query: string }) {
                   >
                     {/* 兩行一律 <div>：可及名稱靠 UA 預設 block 之間補空白（jsdom 不載 Tailwind，span 會黏成「標題位置」）。 */}
                     <div className={cn("truncate text-[13px]", active && "font-medium")}>{highlightTitle(note.title, lowerQuery)}</div>
-                    <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{noteLocationLabel(note, groupIds, t)}</div>
+                    <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{noteLocationLabel(note, { groupIds, folders: EMPTY_FOLDER_INDEX }, t)}</div>
                   </Link>
                 </li>
               );

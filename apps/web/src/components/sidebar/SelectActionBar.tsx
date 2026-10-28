@@ -30,6 +30,7 @@ import {
   type SelectActionId,
 } from "./select-model";
 import { beginSelectRun, endSelectRun, updateSelectRun, useSelectRun } from "./select-run";
+import { EMPTY_FOLDER_INDEX } from "./folder-index";
 import { buildTabNodes } from "./tree";
 
 /**
@@ -112,7 +113,7 @@ export function SelectActionBar() {
   const nodes = useMemo(
     () =>
       notesQuery.isSuccess && (tab !== "workspace" || groupsQuery.data !== undefined)
-        ? buildTabNodes(tab, notesQuery.data, groupsQuery.data ?? [])
+        ? buildTabNodes(tab, notesQuery.data, groupsQuery.data ?? [], EMPTY_FOLDER_INDEX)
         : null,
     [tab, notesQuery.isSuccess, notesQuery.data, groupsQuery.data],
   );

@@ -42,6 +42,7 @@
     "emptyShared": "Nothing has been shared with you yet.",
     "locationGroup": "Workspace › {{group}}",
     "locationShared": "Shared with me · {{role}}",
+    "locationSharedIn": "Shared with me › {{path}} · {{role}}",
     "trash": "Trash"
   },
   "roles": {

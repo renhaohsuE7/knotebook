@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { isCollapsed, useCollapsed } from "./collapse";
 import { GroupRowButton } from "./GroupRowButton";
 import { visibleNoteKeys, type SelectableTab } from "./select-model";
+import { EMPTY_FOLDER_INDEX } from "./folder-index";
 import { noteLocationLabel, type SidebarNode } from "./tree";
 
 /**
@@ -67,7 +68,7 @@ const SelectableNoteRow = memo(function SelectableNoteRow({
         {variant === "recent" ? (
           <span className="min-w-0 flex-1">
             <span className="block truncate">{note.title}</span>
-            <span className="mt-0.5 block truncate text-[11px] font-normal text-muted-foreground">{noteLocationLabel(note, groupIds, t)}</span>
+            <span className="mt-0.5 block truncate text-[11px] font-normal text-muted-foreground">{noteLocationLabel(note, { groupIds, folders: EMPTY_FOLDER_INDEX }, t)}</span>
           </span>
         ) : (
           <span className="min-w-0 flex-1 truncate">{note.title}</span>
@@ -108,7 +109,7 @@ function SelectableNodeList({ nodes, ctx, inGroup = false }: { nodes: readonly S
       {nodes.map((node) =>
         node.kind === "group" ? (
           <SelectableGroupNode key={node.id} node={node} ctx={ctx} />
-        ) : (
+        ) : node.kind === "folder" ? null : (
           <SelectableNoteRow
             key={node.id}
             note={node.note}

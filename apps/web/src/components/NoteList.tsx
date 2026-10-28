@@ -16,6 +16,7 @@ import { hoverReveal } from "@/components/ui/reveal";
 import { Plus, SquareCheck } from "@/components/ui/icons";
 import { EmptyState } from "@/components/EmptyState";
 import { useCollapsed } from "@/components/sidebar/collapse";
+import { EMPTY_FOLDER_INDEX } from "@/components/sidebar/folder-index";
 import { GroupRowButton } from "@/components/sidebar/GroupRowButton";
 import { SidebarLazyBoundary } from "@/components/sidebar/SidebarLazyBoundary";
 import { tabSpec, type HeaderActionId } from "@/components/sidebar/tab-specs";
@@ -108,7 +109,7 @@ function NoteRow({ note, variant, groupIds }: NoteRowProps) {
           // 兩行一律 <div>：可及名稱靠 UA 預設 block 之間補空白（jsdom 不載 Tailwind，span 會黏成「標題位置」）。
           <>
             <div className="truncate text-[13px]">{note.title}</div>
-            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{noteLocationLabel(note, groupIds, t)}</div>
+            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{noteLocationLabel(note, { groupIds, folders: EMPTY_FOLDER_INDEX }, t)}</div>
           </>
         ) : (
           note.title
@@ -202,7 +203,7 @@ function SidebarNodeList({ nodes, ctx, inGroup = false }: { nodes: SidebarNode[]
       {nodes.map((node) =>
         node.kind === "group" ? (
           <GroupNode key={node.id} node={node} ctx={ctx} />
-        ) : (
+        ) : node.kind === "folder" ? null : (
           <NoteRow
             key={node.id}
             note={node.note}
@@ -255,7 +256,7 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
   const nodes = useMemo(
     () =>
       notesQuery.isSuccess && (tab !== "workspace" || groupsQuery.data !== undefined)
-        ? buildTabNodes(tab, notesQuery.data, groupsQuery.data ?? EMPTY_GROUPS)
+        ? buildTabNodes(tab, notesQuery.data, groupsQuery.data ?? EMPTY_GROUPS, EMPTY_FOLDER_INDEX)
         : null,
     [tab, notesQuery.isSuccess, notesQuery.data, groupsQuery.data],
   );

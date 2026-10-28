@@ -42,6 +42,7 @@
     "emptyShared": "還沒有人與你共享筆記。",
     "locationGroup": "工作坊 › {{group}}",
     "locationShared": "與我共享 · {{role}}",
+    "locationSharedIn": "與我共享 › {{path}} · {{role}}",
     "trash": "垃圾桶"
   },
   "roles": {
