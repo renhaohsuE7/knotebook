@@ -17,13 +17,14 @@ import { hoverReveal, type RevealScope } from "@/components/ui/reveal";
 import { FolderPlus, Plus, SquareCheck } from "@/components/ui/icons";
 import { EmptyState } from "@/components/EmptyState";
 import { useCollapsed } from "@/components/sidebar/collapse";
-import { indexFolders } from "@/components/sidebar/folder-index";
+import { indexFolders, liveNotesUnder } from "@/components/sidebar/folder-index";
+import { FolderMenu } from "@/components/sidebar/FolderMenu";
 import { useFolderSortOf } from "@/components/sidebar/folder-sort";
 import { FolderRowButton } from "@/components/sidebar/FolderRowButton";
 import { GroupRowButton } from "@/components/sidebar/GroupRowButton";
 import { SidebarLazyBoundary } from "@/components/sidebar/SidebarLazyBoundary";
 import { tabSpec, type HeaderActionId } from "@/components/sidebar/tab-specs";
-import { buildTabNodes, hasNoteNodes, noteLocationLabel, type LocationContext, type SidebarNode } from "@/components/sidebar/tree";
+import { buildTabNodes, hasNoteNodes, noteLocationLabel, noteSpaceKey, type LocationContext, type SidebarNode } from "@/components/sidebar/tree";
 
 // 一般 tab 選取模式（PR-2c）：只准經 SelectLazy 這個 lazy 入口（首包上限）。兩個掛點共用同一個 chunk。
 const SelectHeader = lazy(() => import("@/components/sidebar/SelectLazy").then((m) => ({ default: m.SelectHeader })));
@@ -39,6 +40,7 @@ export type FolderDialogRequest =
 
 const EMPTY_GROUPS: GroupDto[] = [];
 const EMPTY_FOLDERS: FolderDto[] = [];
+const EMPTY_NOTES: NoteDto[] = [];
 const EMPTY_NODES: SidebarNode[] = [];
 
 /** ApiFail → errors.<code>；其餘（網路失敗等）→ errors.fallback。與 LoginPage
@@ -188,6 +190,8 @@ interface NodeContext {
   createNotePending: boolean;
   /** 開資料夾對話框；`opener` 是關框時還焦點的對象。 */
   openFolderDialog: (request: FolderDialogRequest, opener: HTMLElement | null) => void;
+  /** 快取裡的筆記：資料夾 ⋮ 開啟時判斷子樹有沒有活筆記（刪除擋下）。 */
+  notes: readonly NoteDto[];
 }
 
 /**
@@ -257,6 +261,14 @@ function FolderNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "folder"
             disabled={ctx.createNotePending}
           />
         )}
+        <FolderMenu
+          folder={folder}
+          depth={node.depth}
+          hasLiveNotes={() => liveNotesUnder(ctx.location.folders, folder.id, ctx.notes, (note) => noteSpaceKey(note, ctx.location.groupIds)).length > 0}
+          onCreateNote={() => ctx.onCreateNote?.(groupIdOf(folder), folder.id)}
+          createNotePending={ctx.createNotePending}
+          onRequest={ctx.openFolderDialog}
+        />
       </div>
       {open && (
         <div className="ml-[15px] border-l border-muted-foreground/35 pl-2">
@@ -351,7 +363,7 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
     folderOpenerRef.current = opener;
     setFolderRequest(request);
   };
-  const ctx: NodeContext = { tab, location, onCreateNote, createNotePending, openFolderDialog };
+  const ctx: NodeContext = { tab, location, onCreateNote, createNotePending, openFolderDialog, notes: notesQuery.data ?? EMPTY_NOTES };
 
   useEffect(() => {
     if (selection.active) return;

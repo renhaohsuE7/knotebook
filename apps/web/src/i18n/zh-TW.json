@@ -665,6 +665,22 @@
     "rose": "玫瑰",
     "gold": "金"
   },
+  "folders": {
+    "menu": {
+      "label": "{{name}} 的資料夾選單",
+      "newNote": "新增筆記",
+      "newSubfolder": "新增子資料夾",
+      "rename": "重新命名",
+      "sortBy": "排序",
+      "sortName": "名稱",
+      "sortRecent": "最近修改",
+      "sortSize": "文件大小",
+      "delete": "刪除資料夾",
+      "remove": "移除資料夾",
+      "depthLimit": "已達最多 {{max}} 層",
+      "deleteBlocked": "資料夾裡有你不能刪除的筆記"
+    }
+  },
   "groups": {
     "autoVersions": {
       "title": "自動儲存版本",

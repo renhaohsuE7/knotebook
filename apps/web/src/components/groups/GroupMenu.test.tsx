@@ -86,6 +86,14 @@ describe("GroupMenu", () => {
     expect(items).toEqual(["Members & settings", "Rename", "Delete group", "Leave group"]);
   });
 
+  it("GM-I1 四項各有圖示（users、pencil、trash、log-out），class 含 mr-2 h-4 w-4", async () => {
+    renderMenu(CO_ADMIN_GROUP, () => fakeResponse(500));
+    const menu = await openMenu("Workshop C");
+    const icons = within(menu).getAllByRole("menuitem").map((item) => item.querySelector("svg"));
+    expect(icons.map((svg) => svg?.getAttribute("data-icon"))).toEqual(["users", "pencil", "trash", "log-out"]);
+    for (const svg of icons) expect(svg).toHaveClass("mr-2", "h-4", "w-4");
+  });
+
   it("member 形：查看成員／退出群組；沒有改名與刪除", async () => {
     renderMenu(MEMBER_GROUP, () => fakeResponse(500));
     const menu = await openMenu("Workshop B");

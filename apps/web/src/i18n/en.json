@@ -665,6 +665,22 @@
     "rose": "Rose",
     "gold": "Gold"
   },
+  "folders": {
+    "menu": {
+      "label": "Folder menu for {{name}}",
+      "newNote": "New note",
+      "newSubfolder": "New subfolder",
+      "rename": "Rename",
+      "sortBy": "Sort by",
+      "sortName": "Name",
+      "sortRecent": "Last modified",
+      "sortSize": "Size",
+      "delete": "Delete folder",
+      "remove": "Remove folder",
+      "depthLimit": "Folders can be nested up to {{max}} levels",
+      "deleteBlocked": "This folder has notes you can't delete"
+    }
+  },
   "groups": {
     "autoVersions": {
       "title": "Automatic versions",
