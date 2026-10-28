@@ -312,6 +312,22 @@ describe("FolderMenu", () => {
     }
   });
 
+  it("FM13 開過框之後，Esc 關選單仍把焦點還給 ⋮（「不還焦點」只限開框那一次）", async () => {
+    stubServer({ folders: [A] });
+    renderList();
+    fireEvent.click(within(await openMenu("A")).getByRole("menuitem", { name: "Rename" }));
+    await screen.findByRole("textbox", { name: "Folder name" });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const menuButton = await trigger("A");
+    await waitFor(() => expect(menuButton).toHaveFocus());
+    const menu = await openMenu("A");
+    await waitFor(() => expect(menuButton).not.toHaveFocus());
+    fireEvent.keyDown(menu, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(menuButton).toHaveFocus());
+  });
+
   it("FM9 zh：可及名稱「A 的資料夾選單」、三個排序字、「已達最多 5 層」", async () => {
     await i18n.changeLanguage("zh-TW");
     stubServer({ folders: folderChain("L", 5) });
