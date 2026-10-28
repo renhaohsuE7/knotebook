@@ -542,3 +542,46 @@ describe("#108 兩支工具的共同接線", () => {
     expect(body.error.code).toBe(-32601);
   });
 });
+
+describe("資料夾 PR-3d T3：list_notes 依大小截頁（pageCutShort）", () => {
+  const seedPlain = (db: Db, ownerId: string, n: number) =>
+    db.$client.query(
+      `insert into notes (owner_id, title, slug) select $1::uuid, 'ln ' || g, 'ln-' || g || '-' || substr(md5(random()::text), 1, 8) from generate_series(1, $2::int) g`,
+      [ownerId, n],
+    );
+
+  it("LN1 一般資料 100 篇、limit 100 → 一頁收完、沒有 pageCutShort 鍵（key 集合逐字）", async () => {
+    const ctx = await buildCollabTestApp();
+    const { ownerId, token } = await scenario(ctx);
+    await seedPlain(ctx.db, ownerId, 100);
+    const out = payloadOf(await callTool(ctx.app, token, "list_notes", { limit: 100 }));
+    expect(Object.keys(out)).toEqual(["notes", "nextCursor"]);
+    expect(out.notes).toHaveLength(100);
+    expect(out.nextCursor).toBeNull();
+  });
+
+  it("LN3 一般資料、limit 30 → 30 篇、沒有 pageCutShort 鍵、nextCursor 非 null", async () => {
+    const ctx = await buildCollabTestApp();
+    const { ownerId, token } = await scenario(ctx);
+    await seedPlain(ctx.db, ownerId, 40);
+    const out = payloadOf(await callTool(ctx.app, token, "list_notes", { limit: 30 }));
+    expect(Object.keys(out)).toEqual(["notes", "nextCursor"]);
+    expect(out.notes).toHaveLength(30);
+    expect(out.nextCursor).not.toBeNull();
+  });
+
+  it("LN2 tools/list：description 帶短頁句（LN+）；pageCutShort 的說明逐字", async () => {
+    const ctx = await buildCollabTestApp();
+    const { token } = await scenario(ctx);
+    const res = await mcpPost(ctx.app, rpc("tools/list"), { token });
+    expect(res.statusCode).toBe(200);
+    type Tool = { name: string; description: string; outputSchema: { properties: Record<string, { description?: string }> } };
+    const tool = (res.json().result.tools as Tool[]).find(t => t.name === "list_notes")!;
+    expect(tool.description).toContain(
+      "A page can hold fewer notes than `limit` when the notes are large — `pageCutShort` is then true — so keep paging until `nextCursor` is null.",
+    );
+    expect(tool.outputSchema.properties.pageCutShort!.description).toBe(
+      "Present, and true, when this page was cut short to keep the reply small; more follow, so keep paging with `nextCursor`.",
+    );
+  });
+});

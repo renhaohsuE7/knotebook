@@ -36,6 +36,7 @@ import { BAD_CURSOR_MESSAGE } from "../keyset-cursor.js";
 import { MCP_PAGE_MAX } from "../limits.js";
 import { buildNoteListQuery, type NoteListCursor } from "../queries.js";
 import { toolError, toolResult } from "../tool-result.js";
+import { PAGE_CUT_RESERVE, countWithinWireBudget, wireCost } from "../wire-budget.js";
 import type { McpToolCtx } from "../context.js";
 
 const DEFAULT_LIMIT = 50;
@@ -48,7 +49,12 @@ export const LIST_NOTES_DESCRIPTION =
   "tell whose content you are reading. Paging reads live data, not a snapshot: creating a note, or renaming it, moves " +
   "it to the top of this order, above the cursor you are holding, so no later page shows it. Editing a note's content " +
   "does not move it. While you page, a note shared with you, a note moved into one of your groups, or the notes of a " +
-  "group you join appear at their own unchanged positions, which may already be above your cursor.";
+  "group you join appear at their own unchanged positions, which may already be above your cursor. " +
+  "A page can hold fewer notes than `limit` when the notes are large — `pageCutShort` is then true — so keep paging until `nextCursor` is null.";
+
+/** 資料夾 PR-3d（spec §5.12）：依大小截短的頁的旗標說明（之後 list_trash／list_folders 共用同一句）。 */
+export const PAGE_CUT_SHORT_DESCRIBE =
+  "Present, and true, when this page was cut short to keep the reply small; more follow, so keep paging with `nextCursor`.";
 
 export const listNotesInput = {
   cursor: z
@@ -72,6 +78,7 @@ export const listNotesOutput = {
     .string()
     .nullable()
     .describe("Pass this back as `cursor` for the next page; `null` means this was the last page."),
+  pageCutShort: z.literal(true).optional().describe(PAGE_CUT_SHORT_DESCRIBE),
 };
 
 export interface ListNotesArgs {
@@ -89,6 +96,10 @@ export interface ListNotesArgs {
 function encodeCursor(row: { updatedAtMs: Date; id: string }): string {
   return Buffer.from(`${row.updatedAtMs.toISOString()}${CURSOR_SEP}${row.id}`, "utf8").toString("base64url");
 }
+
+/** 預算的固定部分：空頁＋一個長度與真游標相同的佔位游標（82）＋`pageCutShort` 的保留。 */
+const CURSOR_PLACEHOLDER = encodeCursor({ updatedAtMs: new Date("2026-01-01T00:00:00.000Z"), id: "00000000-0000-0000-0000-000000000000" });
+const LIST_BASE_COST = wireCost({ notes: [], nextCursor: CURSOR_PLACEHOLDER }) + PAGE_CUT_RESERVE;
 
 /**
  * 不變量 S 的前兩關（第三關是 drizzle 的參數化）。base64url 解碼對垃圾輸入不丟例外、只會
@@ -128,9 +139,16 @@ export async function listNotes(args: ListNotesArgs, ctx: McpToolCtx): Promise<C
   const rows = await buildNoteListQuery(ctx.db, { userId: ctx.userId, cursor, limit });
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
+  const summaries = await noteSummariesForModel(ctx.db, page);
+  // 資料夾 PR-3d（spec §5.12）：依 wire 成本截頁。截了就回已收的、游標指向被收的最後一篇（`updatedAtMs`，理由同 encodeCursor），
+  // 並帶 `pageCutShort: true`；沒截照舊（沒有這把 key）。
+  const kept = countWithinWireBudget(summaries.map(wireCost), LIST_BASE_COST);
+  if (kept < page.length) {
+    return toolResult({ notes: summaries.slice(0, kept), nextCursor: encodeCursor(page[kept - 1]!), pageCutShort: true });
+  }
   const last = page[page.length - 1];
   return toolResult({
-    notes: await noteSummariesForModel(ctx.db, page),
+    notes: summaries,
     nextCursor: hasMore && last ? encodeCursor(last) : null,
   });
 }

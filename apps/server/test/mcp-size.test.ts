@@ -21,14 +21,15 @@ import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import * as Y from "yjs";
 import { groups, noteSearchSections, noteStates, notes, uploads, users } from "../src/db/schema.js";
-import { MCP_IMAGE_MAX_BYTES, MCP_PAGE_MAX } from "../src/mcp/limits.js";
+import { MCP_IMAGE_MAX_BYTES, MCP_LIST_WIRE_BUDGET, MCP_PAGE_MAX } from "../src/mcp/limits.js";
 import { writeSearchIndex } from "../src/notes/search-index.js";
 import { SEARCH_EXTRACTOR_VERSION } from "../src/notes/search-text.js";
 import { buildCollabTestApp, type CollabTestCtx } from "./helpers.js";
 import { getContent, seedContent, seedTokenForUser } from "./editing-helpers.js";
 import { mcpPost, rpc } from "./mcp-helpers.js";
 import { seedUpload } from "./copy-helpers.js";
-import { seedGroup } from "./group-helpers.js";
+import { cookieOf, seedGroup } from "./group-helpers.js";
+import { wireCost } from "../src/mcp/wire-budget.js";
 import { markTrashed } from "./trash-helpers.js";
 import type { Db } from "../src/db/index.js";
 import type { FastifyInstance } from "fastify";
@@ -120,6 +121,9 @@ const MIN_WORST_TRASH_WIRE = 230_000;
  * 案 (iv) 第一發（#177 之後的群組形最壞情形）的下界哨兵。2026-10-07 實測 **247 056**（餘裕 ×1.06，剩 15 088）；
  * #177 之前同一欄位配置的合規形（標題 200 個 ASCII、群組名 80 個 `"`）是 211 556。落到 240 000 以下代表測資沒造滿，
  * 或 `truncateText` 截得比「逃脫後 200」還兇（例如把預算算成兩份逃脫）——回頭查，不要改這個數字遷就。
+ * 資料夾 PR-3d T3 起 `list_notes` 依 wire 預算（`MCP_LIST_WIRE_BUDGET` 240 000）截頁，單頁回應不會再超過預算，所以改量
+ * 「合併所有頁的 `notes` 後 `wireCost({ notes, nextCursor: null })`」（鏡像兩份、不含 JSON-RPC 信封）：100 篇加上 `folder: null`
+ * 後預估約 25 萬（T2 單頁實測 250 056 含信封）。它仍是「fixture 夠壞」的證明——低於 240 000 就代表不截頁也放得下，(iv) 便量不到截頁。
  */
 const MIN_WORST_GROUP_WIRE = 240_000;
 
@@ -150,12 +154,82 @@ async function callWire(
   return wire;
 }
 
+type ListNotesPage = { notes: Array<Record<string, unknown> & { id: string; updatedAt: string }>; nextCursor: string | null; pageCutShort?: true };
+
+/** 資料夾 PR-3d T3：`list_notes` 從頭翻到 `nextCursor` 為 null；每頁都量 wire、斷 ≤ N（同 callWire）。 */
+async function pageAllNotes(app: FastifyInstance, token: string, label: string, limit: number): Promise<ListNotesPage[]> {
+  const pages: ListNotesPage[] = [];
+  let cursor: string | undefined;
+  for (let i = 1; i <= 20; i += 1) {
+    const args = cursor === undefined ? { limit } : { limit, cursor };
+    const res = await mcpPost(app, rpc("tools/call", { name: "list_notes", arguments: args }), { token });
+    expect(res.statusCode).toBe(200);
+    const result = res.json().result as { isError?: true; structuredContent: ListNotesPage };
+    expect(result.isError).toBeUndefined();
+    const wire = res.body.length;
+    const pageLabel = `${label} 第 ${i} 頁`;
+    measured.push({ label: pageLabel, wire });
+    console.log(`[案 11c] ${pageLabel.padEnd(46)} wire=${String(wire).padStart(7)}  餘裕 ×${(MCP_MAX_WIRE / wire).toFixed(1)}`);
+    expect(wire).toBeLessThanOrEqual(MCP_MAX_WIRE);
+    // 生產端不變量（spec §5.12）：每頁的 payload（鏡像兩份）不超過預算；比哨兵嚴，守得住預算常數接錯或不截頁這類回歸。
+    expect(wireCost(result.structuredContent)).toBeLessThanOrEqual(MCP_LIST_WIRE_BUDGET);
+    pages.push(result.structuredContent);
+    if (result.structuredContent.nextCursor === null) return pages;
+    cursor = result.structuredContent.nextCursor;
+  }
+  throw new Error("list_notes 翻了 20 頁還沒到底");
+}
+
+/** 同一人 cookie 的 `GET /api/notes`（依微秒排；只比集合）。 */
+async function restNoteIds(app: FastifyInstance, userId: string): Promise<string[]> {
+  const res = await app.inject({ method: "GET", url: "/api/notes", cookies: await cookieOf(userId) });
+  expect(res.statusCode, res.body).toBe(200);
+  return (res.json() as Array<{ id: string }>).map(n => n.id);
+}
+
+/**
+ * 翻完的各頁：id 不重複、集合等於 REST、共 `total` 篇；序列依（`updatedAt` 毫秒 DESC, `id` DESC）——MCP 的 keyset 鍵。
+ * REST 依微秒排，同一毫秒內順序可能不同，所以不比序列。
+ */
+function expectPagedSameAsRest(pages: ListNotesPage[], restIds: string[], total: number): ListNotesPage["notes"] {
+  const all = pages.flatMap(p => p.notes);
+  const ids = all.map(n => n.id);
+  expect(new Set(ids).size).toBe(ids.length);
+  expect(ids).toHaveLength(total);
+  expect([...ids].sort()).toEqual([...restIds].sort());
+  for (let i = 1; i < all.length; i += 1) {
+    const a = all[i - 1]!;
+    const b = all[i]!;
+    expect(a.updatedAt > b.updatedAt || (a.updatedAt === b.updatedAt && a.id > b.id), `${i - 1}→${i}`).toBe(true);
+  }
+  return all;
+}
+
 /** owner ＋ 唯讀 PAT。 */
 async function owner(ctx: CollabTestCtx): Promise<{ id: string; email: string; token: string }> {
   const email = `o-${randomUUID()}@example.com`;
   const user = await ctx.createUser({ email, password: PASSWORD });
   const { token } = await seedTokenForUser(ctx.db, user.id, "notes:read");
   return { id: user.id, email, token };
+}
+
+/** 測資 (iv) 的 `count`（預設 100）篇最壞群組筆記（說明見 (iv) 上方的長註解）；(iv)、(iv-b) 與 LN4 共用。 */
+async function seedWorstGroupNotes(
+  ctx: CollabTestCtx,
+  count: number = MCP_PAGE_MAX,
+): Promise<{ o: { id: string; email: string; token: string }; g: { id: string } }> {
+  const o = await owner(ctx);
+  const handle = `h${"a".repeat(31)}`; // 32 字元：讓 lastEdited.byHandle 也滿長，同 (iii)（gate r4 B-N2）
+  await ctx.db.update(users).set({ handle }).where(eq(users.id, o.id));
+  const name = `${'"'.repeat(67)}${"\u0001".repeat(13)}`;
+  expect([...name]).toHaveLength(80); // `groups_name_chk` 的上限
+  const g = await seedGroup(ctx.db, name, [{ userId: o.id, role: "member" }]);
+  const agentLabel = "g".repeat(32);
+  for (let i = 0; i < count; i += 1) {
+    const n = String(i).padStart(4, "0");
+    await seedMaxNote(ctx.db, { groupId: g.id }, o.id, { title: '"'.repeat(200), slug: `${n}-${"s".repeat(95)}`, agentLabel });
+  }
+  return { o, g };
 }
 
 async function firstSectionId(app: FastifyInstance, token: string, noteId: string, offset = 0): Promise<string> {
@@ -403,33 +477,28 @@ describe("#108 單次回應大小（案 11c／M16）", () => {
    *   emoji／CJK 任三種的組合窮舉出來的（2026-10-07，一次性腳本、不進版控）；69＋11 比 67＋13 少 1。
    * 第一發（最壞形）實測見 `[案 11c]` 那行 log。
    *
-   * 後兩發是**回到 #177 之前就會破 N 的兩形**（兩條突變的守衛，見 it 內註解）：群組名改成 80 個 U+0001、
-   * 標題改成 200 個 U+0001。
+   * 後兩發是**回到 #177 之前就會破 N 的兩形**：群組名改成 80 個 U+0001、標題改成 200 個 U+0001。資料夾 PR-3d T3 起 list_notes
+   * 依預算截頁，它們只斷 ≤ N，不再是那兩條突變的守衛（見 it 內註解）。
    */
-  it("(iv) #175／#177 群組形：100 筆最壞群組筆記（標題 200 個 `\"`、群組名 67 個 `\"`＋13 個 U+0001）＋ limit 100 → ≤ N", async () => {
+  it("(iv) #175／#177 群組形：100 筆最壞群組筆記（標題 200 個 `\"`、群組名 67 個 `\"`＋13 個 U+0001）＋ limit 100 → 依大小截頁、每頁 ≤ N、續翻與 REST 同一組", async () => {
     const ctx = await buildCollabTestApp();
-    const o = await owner(ctx);
-    const handle = `h${"a".repeat(31)}`; // 32 字元：讓 lastEdited.byHandle 也滿長，同 (iii)（gate r4 B-N2）
-    await ctx.db.update(users).set({ handle }).where(eq(users.id, o.id));
-    const name = `${'"'.repeat(67)}${"\u0001".repeat(13)}`;
-    expect([...name]).toHaveLength(80); // `groups_name_chk` 的上限
-    const g = await seedGroup(ctx.db, name, [{ userId: o.id, role: "member" }]);
-    const agentLabel = "g".repeat(32);
-    for (let i = 0; i < MCP_PAGE_MAX; i += 1) {
-      const n = String(i).padStart(4, "0");
-      await seedMaxNote(ctx.db, { groupId: g.id }, o.id, { title: '"'.repeat(200), slug: `${n}-${"s".repeat(95)}`, agentLabel });
-    }
-    const wire = await callWire(ctx.app, o.token, "(iv) list_notes limit=100（群組形最壞）", "list_notes", { limit: MCP_PAGE_MAX });
-    expect(wire).toBeGreaterThan(MIN_WORST_GROUP_WIRE); // 「測資沒造滿／截過頭」的哨兵，見常數註解
+    const { o, g } = await seedWorstGroupNotes(ctx);
+    // 資料夾 PR-3d T3（m-3）：第一頁依 wire 預算截短；續翻到 null，每頁 ≤ N（pageAllNotes 內建），合計與 REST 同一組。
+    const pages = await pageAllNotes(ctx.app, o.token, "(iv) list_notes limit=100（群組形最壞）", MCP_PAGE_MAX);
+    expect(pages[0]!.pageCutShort).toBe(true);
+    expect(pages[0]!.notes.length).toBeLessThan(MCP_PAGE_MAX);
+    expect(pages[0]!.nextCursor).not.toBeNull();
+    const all = expectPagedSameAsRest(pages, await restNoteIds(ctx.app, o.id), MCP_PAGE_MAX);
+    // 「測資沒造滿／截過頭」的哨兵，見常數註解：合併各頁後的 100 篇放不進一頁。
+    expect(wireCost({ notes: all, nextCursor: null })).toBeGreaterThan(MIN_WORST_GROUP_WIRE);
     const search = await callWire(ctx.app, o.token, "(iv) search_notes limit=50（群組形最壞）", "search_notes", { query: '""""', limit: 50 });
     expect(search).toBeGreaterThan(MIN_WORST_GROUP_WIRE / 2); // 確定 50 筆都命中，不是空結果的假綠
 
-    // 突變守衛 1：`ownerForModel` 不截群組名 → 這一發 ≈ 292 000 > N（#177 之前 80 個 U+0001 的群組名也是這樣
-    // 破 N 的）。⚠ 第一發量不到這條：67＋13 的名字不截時 wire 反而比截了＋旗標小。
+    // 下面兩發是 #177 之前會破 N 的兩形，只斷 ≤ N。⚠ T3 起 list_notes 依預算截頁，它們**不再是**「`ownerForModel` 不截群組名」
+    // 「`truncateText` 退回按原長度」兩條突變的守衛（那樣寫時頁會被截得更短，照樣 ≤ N）；實際守衛是 `test/unit/mcp-limits.test.ts`
+    // 的群組名與標題案。
     await ctx.db.update(groups).set({ name: "\u0001".repeat(80) }).where(eq(groups.id, g.id));
     await callWire(ctx.app, o.token, "(iv) list_notes 群組名 80 個 U+0001", "list_notes", { limit: MCP_PAGE_MAX });
-    // 突變守衛 2（C0 標題）：`truncateText` 退回按原長度 → 200 個 U+0001 整個留下，每列 2600。
-    // （同一條突變第一發也會紅——200 個 `"` 不截時每列 1200。）
     await ctx.db.update(notes).set({ title: "\u0001".repeat(200) }).where(eq(notes.groupId, g.id));
     await callWire(ctx.app, o.token, "(iv) list_notes 標題 200 個 U+0001", "list_notes", { limit: MCP_PAGE_MAX });
 
@@ -438,6 +507,54 @@ describe("#108 單次回應大小（案 11c／M16）", () => {
     // 只靠 `callWire` 內建的 `≤ N` 與非錯誤；不加下界哨兵（create_note 回應本來就小）。
     const { token: rwToken } = await seedTokenForUser(ctx.db, o.id, "notes:read notes:write");
     await callWire(ctx.app, rwToken, "(iv) create_note（群組形）", "create_note", { title: '"'.repeat(1000), group_id: g.id });
+  });
+
+  /**
+   * LN4（資料夾 PR-3d T3）：截頁的游標落在同一毫秒的一對上。先把 (iv) 的 100 篇依原順序各拉開 2 ms（內容不變），翻一次找出第一頁的截點 k；
+   * 再把第 k、k+1 篇設成同一毫秒、差 1 µs，**µs 序與 id 序相反**（µs 較大的給 id 較小者）：REST（微秒）與 MCP（毫秒＋id）在這一對上順序相反，
+   * 游標若用微秒或非排序鍵就會漏掉其中一篇。
+   */
+  // (iv-b)（T3 審查 I1）：多一篇讓 `limit + 1` 那列存在（hasMore = true），截頁這條路徑在「本來就還有下一頁」時也要走到。
+  it("(iv-b) 101 篇最壞群組筆記、limit 100（查詢多取的那列存在）→ 第一頁照樣依大小截、有 nextCursor；續翻到底與 REST 同一組 101 篇", async () => {
+    const ctx = await buildCollabTestApp();
+    const { o } = await seedWorstGroupNotes(ctx, MCP_PAGE_MAX + 1);
+    const pages = await pageAllNotes(ctx.app, o.token, "(iv-b) list_notes 101 篇 limit=100", MCP_PAGE_MAX);
+    expect(pages[0]!.pageCutShort).toBe(true);
+    expect(pages[0]!.notes.length).toBeLessThan(MCP_PAGE_MAX);
+    expect(pages[0]!.nextCursor).not.toBeNull();
+    expectPagedSameAsRest(pages, await restNoteIds(ctx.app, o.id), MCP_PAGE_MAX + 1);
+  });
+
+  it("LN4 毫秒邊界：第一頁末篇與第二頁首篇同一毫秒、µs 序與 id 序相反 → 續翻不漏不重", async () => {
+    const ctx = await buildCollabTestApp();
+    const { o, g } = await seedWorstGroupNotes(ctx);
+    const pool = ctx.db.$client;
+    const base = Date.UTC(2026, 9, 1);
+    await pool.query(
+      `with r as (select id, row_number() over (order by updated_at desc, id desc) as rn from notes where group_id = $1)
+       update notes n set updated_at = $2::timestamptz - r.rn * interval '2 milliseconds' from r where n.id = r.id`,
+      [g.id, new Date(base).toISOString()],
+    );
+    const before = await pageAllNotes(ctx.app, o.token, "LN4 拉開後", MCP_PAGE_MAX);
+    const k = before[0]!.notes.length;
+    expect(k).toBeLessThan(MCP_PAGE_MAX);
+    const order = before.flatMap(p => p.notes).map(n => n.id);
+    const [small, large] = [order[k - 1]!, order[k]!].sort() as [string, string];
+    const ms = new Date(base - (2 * k + 1)).toISOString(); // 介於第 k−1 篇與第 k+2 篇之間
+    await pool.query(`update notes set updated_at = $2::timestamptz + interval '501 microseconds' where id = $1`, [small, ms]);
+    await pool.query(`update notes set updated_at = $2::timestamptz + interval '500 microseconds' where id = $1`, [large, ms]);
+
+    // 前提：這一毫秒恰好兩篇；µs 序與 id 序相反（REST 先 small、MCP 先 large）。
+    const same = await pool.query(`select count(*)::int as n from notes where date_trunc('milliseconds', updated_at) = $1::timestamptz`, [ms]);
+    expect(same.rows[0].n).toBe(2);
+    const rest = await restNoteIds(ctx.app, o.id);
+    expect(rest.indexOf(small)).toBe(rest.indexOf(large) - 1);
+
+    const pages = await pageAllNotes(ctx.app, o.token, "LN4", MCP_PAGE_MAX);
+    expect(pages[0]!.notes).toHaveLength(k);
+    expect(pages[0]!.notes.at(-1)!.id).toBe(large);
+    expect(pages[1]!.notes[0]!.id).toBe(small);
+    expectPagedSameAsRest(pages, rest, MCP_PAGE_MAX);
   });
 
   /**
