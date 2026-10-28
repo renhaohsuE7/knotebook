@@ -7,7 +7,10 @@ import { describe, expect, it } from "vitest";
 
 const publicDir = `${process.cwd()}/public`;
 const indexHtml = readFileSync(`${process.cwd()}/index.html`, "utf8");
-const head = indexHtml.slice(indexHtml.indexOf("<head>"), indexHtml.indexOf("</head>"));
+// 先去掉 HTML 註解：被註解掉的 <link>／<meta> 在瀏覽器裡不存在，不能讓它們算數。
+const head = indexHtml.slice(indexHtml.indexOf("<head>"), indexHtml.indexOf("</head>")).replace(/<!--[\s\S]*?-->/g, "");
+// index.css 的 --background 註解記著淺／深兩組 hex（:root 與 :root.dark 各一條），theme-color 要與它們一致。
+const backgroundHexes = [...readFileSync(`${process.cwd()}/src/index.css`, "utf8").matchAll(/--background:[^;]*;\s*\/\*\s*(#[0-9a-f]{6})/gi)].map((m) => m[1].toLowerCase());
 
 interface ManifestIcon {
   src: string;
@@ -96,7 +99,11 @@ describe("index.html 的 PWA 標記（#336）", () => {
     expect(links[0]).toContain('href="/manifest.webmanifest"');
   });
 
-  it("theme-color 有淺／深兩組（prefers-color-scheme），淺色那組等於 manifest 的 theme_color", () => {
+  it("index.css 的 --background 註解恰有淺、深兩組 hex（下一條的比對來源；抓不到就紅，不靜默略過）", () => {
+    expect(backgroundHexes).toHaveLength(2);
+  });
+
+  it("theme-color 有淺／深兩組（prefers-color-scheme），淺色＝manifest theme_color＝頁底色，深色＝深色頁底色", () => {
     const metas = head.match(/<meta\s+name="theme-color"[^>]*>/g) ?? [];
     expect(metas).toHaveLength(2);
     const light = metas.find((m) => m.includes("(prefers-color-scheme: light)"));
@@ -104,10 +111,11 @@ describe("index.html 的 PWA 標記（#336）", () => {
     expect(light, "缺淺色 theme-color").toBeDefined();
     expect(dark, "缺深色 theme-color").toBeDefined();
     expect(light).toContain(`content="${readManifest().theme_color}"`);
-    expect(dark).toMatch(/content="#[0-9a-f]{6}"/i);
+    expect(readManifest().theme_color.toLowerCase()).toBe(backgroundHexes[0]);
+    expect(dark?.toLowerCase()).toContain(`content="${backgroundHexes[1]}"`);
   });
 
-  it("仍只有一段 inline script（security-headers.ts 逐回應算 hash；新增 PWA 標記不得多出 inline script）", () => {
+  it("仍只有一段 inline script（theme.test.tsx 只抓第一段驗防閃；新增 PWA 標記不得多出 inline script）", () => {
     const inline = head.match(/<script(?![^>]*\ssrc=)[^>]*>/g) ?? [];
     expect(inline).toHaveLength(1);
   });

@@ -259,7 +259,10 @@ describe("ThemeProvider / useTheme", () => {
     // vitest 下的 `import.meta.url` 是 vite 的 http URL，不能餵給 fs——用 cwd
     // （跑 test 時一律是 apps/web）組路徑。
     const html = readFileSync(`${process.cwd()}/index.html`, "utf8");
-    const inlineScript = html.slice(html.indexOf("<head>"), html.indexOf("</head>"));
+    const head = html.slice(html.indexOf("<head>"), html.indexOf("</head>"));
+    // 只取 script 本體：head 裡另有 `<meta name="theme-color" media="(prefers-color-scheme: dark)">`（#336），
+    // 對整段 head 比對會讓下面的 "prefers-color-scheme: dark" 斷言在 script 失去它時照樣綠。
+    const inlineScript = head.slice(head.indexOf("<script>"), head.indexOf("</script>"));
 
     expect(inlineScript).toContain(STORAGE_KEY);
     expect(inlineScript).toContain("prefers-color-scheme: dark");
