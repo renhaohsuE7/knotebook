@@ -44,6 +44,8 @@
     "locationShared": "與我共享 · {{role}}",
     "locationSharedIn": "與我共享 › {{path}} · {{role}}",
     "folderEmpty": "沒有筆記",
+    "newFolder": "新增資料夾",
+    "newFolderIn": "{{group}} 新增資料夾",
     "trash": "垃圾桶"
   },
   "roles": {

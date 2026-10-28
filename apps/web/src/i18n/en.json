@@ -44,6 +44,8 @@
     "locationShared": "Shared with me · {{role}}",
     "locationSharedIn": "Shared with me › {{path}} · {{role}}",
     "folderEmpty": "No notes",
+    "newFolder": "New folder",
+    "newFolderIn": "New folder in {{group}}",
     "trash": "Trash"
   },
   "roles": {

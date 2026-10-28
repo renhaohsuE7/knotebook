@@ -12,7 +12,7 @@ import { SidebarTabProvider, type SidebarTab } from "@/lib/sidebar-tab";
 import { SidebarTabList } from "@/components/sidebar/SidebarTabList";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { NoteList, type NoteListProps } from "./NoteList";
-import { adminRole, EDITOR_PERMS, groupDto, memberRole, OWNER_PERMS, VIEWER_PERMS } from "@/test/fixtures";
+import { adminRole, customRole, EDITOR_PERMS, groupDto, memberRole, OWNER_PERMS, VIEWER_PERMS } from "@/test/fixtures";
 import { __resetCollapseForTests } from "@/components/sidebar/collapse";
 import { __resetFolderSortForTests, setFolderSort } from "@/components/sidebar/folder-sort";
 import { FOLDER_LIST_EMPTY, folderDto, groupFolder, sharedFolder } from "@/test/folder-fixtures";
@@ -424,7 +424,7 @@ describe("NoteList", () => {
       expect(within(header()).getByText("My notes")).toHaveClass("truncate"); // ellipsis 要掛在文字元素上
       const plus = within(header()).getByRole("button", { name: "New personal note" });
       expect(plus).not.toHaveClass("opacity-0");
-      expect(within(header()).getAllByRole("button")).toHaveLength(2);
+      expect(within(header()).getAllByRole("button")).toHaveLength(3);
       expect(within(header()).getAllByRole("button")[0]).toHaveAccessibleName("Select");
     });
 
@@ -1583,5 +1583,90 @@ describe("NoteList × 資料夾", () => {
     expect(list().firstElementChild).toHaveClass("overflow-x-clip", "px-2");
     expect(list()).not.toHaveClass("overflow-x-clip");
     expect(list()).not.toHaveClass("px-2");
+  });
+});
+
+// ── 新增資料夾入口（資料夾 PR-3b-1 T3；spec §6.1、§6.3）
+describe("NoteList × 新增資料夾", () => {
+  const G: GroupDto = groupDto({ id: "G", name: "G" }, adminRole());
+  const R: GroupDto = groupDto({ id: "R", name: "R" }, customRole());
+
+  function json(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  }
+
+  function stubCreate() {
+    const posts: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url === "/api/folders" && method === "POST") {
+          posts.push(JSON.parse(String(init?.body)));
+          return Promise.resolve(json(folderDto({ id: "new", name: "New one" }), 201));
+        }
+        if (url === "/api/folders") return Promise.resolve(json({ folders: [] }));
+        if (url === "/api/notes" && method === "GET") return Promise.resolve(json([OWNER_NOTE]));
+        if (url === "/api/groups" && method === "GET") return Promise.resolve(json([G, R]));
+        if (url === "/api/auth/me" && method === "GET") return Promise.resolve(json(ME));
+        throw new Error(`unexpected fetch: ${method} ${url}`);
+      }),
+    );
+    return posts;
+  }
+
+  const headerNames = () => within(header()).getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent);
+  const rowNames = (id: string) =>
+    Array.from(groupNode(id)!.querySelector(":scope > div")!.querySelectorAll("button")).map((button) => button.getAttribute("aria-label") ?? button.textContent);
+
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("FR12 我的筆記標題列依序 Select、New folder、New personal note；New folder 帶 folder-plus 圖示、24px；與我共享只有 Select；工作坊 Select、New group", async () => {
+    stubCreate();
+    renderNoteList();
+    await within(panel()).findByRole("link", { name: OWNER_NOTE.title });
+    expect(headerNames()).toEqual(["Select", "New folder", "New personal note"]);
+    const newFolder = within(header()).getByRole("button", { name: "New folder" });
+    expect(newFolder.querySelector('svg[data-icon="folder-plus"]')).not.toBeNull();
+    expect(newFolder).toHaveClass("h-6", "w-6");
+    selectTab("Shared with me");
+    expect(headerNames()).toEqual(["Select"]);
+    selectTab("Workspace");
+    expect(headerNames()).toEqual(["Select", "New group"]);
+  });
+
+  it("FR13 按 New folder → 對話框（lazy）→ 送出 body space: personal", async () => {
+    const posts = stubCreate();
+    renderNoteList();
+    await within(panel()).findByRole("link", { name: OWNER_NOTE.title });
+    fireEvent.click(within(header()).getByRole("button", { name: "New folder" }));
+    const input = await screen.findByRole("textbox", { name: "Folder name" });
+    fireEvent.change(input, { target: { value: "Plans" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(posts).toEqual([{ name: "Plans", space: { kind: "personal" } }]));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("FR14 群組列 New folder in G：只在 edit 時渲染、在 New note in G 之前、hover 浮出；送出 body space: group G", async () => {
+    const posts = stubCreate();
+    renderNoteList({}, { tab: "workspace" });
+    await waitFor(() => expect(groupNode("G")).not.toBeNull());
+    const names = rowNames("G");
+    expect(names.indexOf("New folder in G")).toBeGreaterThanOrEqual(0);
+    expect(names.indexOf("New folder in G")).toBeLessThan(names.indexOf("New note in G"));
+    expect(rowNames("R")).not.toContain("New folder in R");
+    const button = within(groupNode("G")!).getByRole("button", { name: "New folder in G" });
+    expect(button.className).toContain("group-hover/grouprow:opacity-100");
+    fireEvent.click(button);
+    fireEvent.change(await screen.findByRole("textbox", { name: "Folder name" }), { target: { value: "Reports" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(posts).toEqual([{ name: "Reports", space: { kind: "group", groupId: "G" } }]));
   });
 });

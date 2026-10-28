@@ -1,7 +1,7 @@
-import { lazy, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { lazy, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactElement, type ReactNode, type RefObject, type SVGProps } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
-import { canonicalNotePath, type FolderDto, type GroupDto, type NoteDto } from "@knotebook/shared";
+import { canonicalNotePath, type FolderDto, type FolderSpaceDto, type GroupDto, type NoteDto } from "@knotebook/shared";
 import { ApiFail } from "@/api/client";
 import { folderErrorMessage, useFolders } from "@/api/folders";
 import { useGroups } from "@/api/groups";
@@ -14,7 +14,7 @@ import { useSidebarTabActions, useSidebarTabState } from "@/lib/sidebar-tab";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { hoverReveal, type RevealScope } from "@/components/ui/reveal";
-import { Plus, SquareCheck } from "@/components/ui/icons";
+import { FolderPlus, Plus, SquareCheck } from "@/components/ui/icons";
 import { EmptyState } from "@/components/EmptyState";
 import { useCollapsed } from "@/components/sidebar/collapse";
 import { indexFolders } from "@/components/sidebar/folder-index";
@@ -28,6 +28,14 @@ import { buildTabNodes, hasNoteNodes, noteLocationLabel, type LocationContext, t
 // 一般 tab 選取模式（PR-2c）：只准經 SelectLazy 這個 lazy 入口（首包上限）。兩個掛點共用同一個 chunk。
 const SelectHeader = lazy(() => import("@/components/sidebar/SelectLazy").then((m) => ({ default: m.SelectHeader })));
 const SelectableTree = lazy(() => import("@/components/sidebar/SelectLazy").then((m) => ({ default: m.SelectableTree })));
+// 資料夾對話框（新增／改名／刪除）：只准經 FolderLazy 這個 lazy 入口（首包上限）。
+const FolderDialogs = lazy(() => import("@/components/sidebar/FolderLazy").then((m) => ({ default: m.FolderDialogs })));
+
+/** 資料夾對話框的請求（host 在每份 NoteList 實例各一份；T4 的資料夾 ⋮ 也經 `NodeContext.openFolderDialog` 開框）。 */
+export type FolderDialogRequest =
+  | { kind: "create"; parent: { folderId: string } | { space: FolderSpaceDto } }
+  | { kind: "rename"; folder: FolderDto }
+  | { kind: "delete"; folder: FolderDto };
 
 const EMPTY_GROUPS: GroupDto[] = [];
 const EMPTY_FOLDERS: FolderDto[] = [];
@@ -143,13 +151,17 @@ function HeaderActionButton({
   disabled = false,
   buttonRef,
   reveal,
+  icon: Icon = Plus,
 }: {
   label: string;
-  onClick: () => void;
+  /** `currentTarget` 給開框的呼叫端當還焦點的對象。 */
+  onClick: (event: MouseEvent<HTMLButtonElement>) => void;
   disabled?: boolean;
   /** 工作坊標題列「＋」用：讓新增群組對話框關閉時把焦點還回來（P17）。 */
   buttonRef?: RefObject<HTMLButtonElement | null>;
   reveal?: RevealScope;
+  /** 預設「＋」；「新增資料夾」傳 `FolderPlus`。 */
+  icon?: (props: SVGProps<SVGSVGElement>) => ReactElement;
 }) {
   return (
     <Button
@@ -164,7 +176,7 @@ function HeaderActionButton({
       // 24px（spec §8.1；P21）。hover 浮出與觸控（`hover: none`）常駐見 `ui/reveal.ts`。
       className={cn("h-6 w-6 shrink-0", reveal && hoverReveal(reveal))}
     >
-      <Plus aria-hidden="true" className="h-3.5 w-3.5" />
+      <Icon aria-hidden="true" className="h-3.5 w-3.5" />
     </Button>
   );
 }
@@ -174,6 +186,8 @@ interface NodeContext {
   location: LocationContext;
   onCreateNote?: (groupId?: string, folderId?: string) => void;
   createNotePending: boolean;
+  /** 開資料夾對話框；`opener` 是關框時還焦點的對象。 */
+  openFolderDialog: (request: FolderDialogRequest, opener: HTMLElement | null) => void;
 }
 
 /**
@@ -188,6 +202,15 @@ function GroupNode({ node, ctx }: { node: Extract<SidebarNode, { kind: "group" }
     <li data-node-kind="group" data-node-id={group.id} className="flex flex-col gap-0.5">
       <div className="group/grouprow flex h-7 items-center gap-0.5 rounded-md hover:bg-brand-soft active:bg-brand-soft-strong">
         <GroupRowButton name={group.name} open={open} onToggle={toggle} />
+        {/* 資料夾 spec §6.3、N7：能編輯群組筆記才能建資料夾；排在「＋」之前（稿 `Workshop`，讀碼發現 19）。 */}
+        {group.myRole?.permissions.edit && (
+          <HeaderActionButton
+            reveal="grouprow"
+            icon={FolderPlus}
+            label={t("sidebar.newFolderIn", { group: group.name })}
+            onClick={(event) => ctx.openFolderDialog({ kind: "create", parent: { space: { kind: "group", groupId: group.id } } }, event.currentTarget)}
+          />
+        )}
         {/* #175 §8.2＋PR3：「＋」只在我的角色能在這個群組建立**且能編輯**筆記時渲染——能建不能改的人建出來的是
             自己也改不了的空白筆記（spec 疑點 11；他仍可經移入／複製把筆記放進群組，PR2）；`myRole` null＝防禦，不渲染。 */}
         {group.myRole?.permissions.create && group.myRole.permissions.edit && (
@@ -301,6 +324,8 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
   const sortOf = useFolderSortOf();
   const [createOpen, setCreateOpen] = useState(false);
   const addGroupRef = useRef<HTMLButtonElement>(null);
+  const [folderRequest, setFolderRequest] = useState<FolderDialogRequest | null>(null);
+  const folderOpenerRef = useRef<HTMLElement | null>(null);
   const selectButtonRef = useRef<HTMLButtonElement>(null);
   /** 進出選取模式後要聚焦的鈕：只有發起的這一份實例會設（靜態卡與抽屜同時在 DOM，另一份不搶焦點）。 */
   const focusAfterRef = useRef<"done" | "select" | null>(null);
@@ -322,7 +347,11 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
     [tab, notesQuery.isSuccess, notesQuery.data, groupsQuery.data, foldersPending, folderIndex, sortOf],
   );
   const selectable = nodes !== null && hasNoteNodes(nodes);
-  const ctx: NodeContext = { tab, location, onCreateNote, createNotePending };
+  const openFolderDialog = (request: FolderDialogRequest, opener: HTMLElement | null) => {
+    folderOpenerRef.current = opener;
+    setFolderRequest(request);
+  };
+  const ctx: NodeContext = { tab, location, onCreateNote, createNotePending, openFolderDialog };
 
   useEffect(() => {
     if (selection.active) return;
@@ -412,6 +441,16 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
             label={t("sidebar.newPersonalNote")}
             onClick={() => onCreateNote?.(undefined)}
             disabled={createNotePending}
+          />
+        );
+      case "newFolder":
+        // 本 PR 只有我的筆記宣告這個動作（PR-3b-2 加與我共享時依 tab 給 shared）。
+        return (
+          <HeaderActionButton
+            key={action}
+            icon={FolderPlus}
+            label={t("sidebar.newFolder")}
+            onClick={(event) => openFolderDialog({ kind: "create", parent: { space: { kind: "personal" } } }, event.currentTarget)}
           />
         );
       case "newGroup":
@@ -508,6 +547,12 @@ export function NoteList({ onCreateNote, createNotePending = false }: NoteListPr
       </div>
       {/* 對話框只在開啟時掛載，關閉時焦點還給標題列「＋」（`returnFocusRef`）。 */}
       {createOpen && <GroupNameDialog mode="create" open onOpenChange={setCreateOpen} returnFocusRef={addGroupRef} />}
+      {/* 資料夾對話框：只在開啟時掛載；chunk 載入失敗時顯示 inline 錯誤（不藏起來，否則是一排沒反應的鈕）。 */}
+      {folderRequest && (
+        <SidebarLazyBoundary chunk="folder" fallback={null} errorClassName="p-2">
+          <FolderDialogs request={folderRequest} returnFocusRef={folderOpenerRef} onClose={() => setFolderRequest(null)} />
+        </SidebarLazyBoundary>
+      )}
     </>
   );
 }

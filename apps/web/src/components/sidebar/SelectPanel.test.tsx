@@ -168,7 +168,7 @@ describe("一般 tab 的選取模式（PR-2c T4）", () => {
       stubFetch({ notes: ALL_NOTES });
       renderPanel();
       await within(panel()).findByRole("link", { name: "p1" });
-      expect(headerButtonNames()).toEqual(["Select", "New personal note"]);
+      expect(headerButtonNames()).toEqual(["Select", "New folder", "New personal note"]);
       const select = selectButton();
       expect(select).toHaveAttribute("title", "Select");
       expect(select).toHaveAttribute("data-sidebar-select", "");
