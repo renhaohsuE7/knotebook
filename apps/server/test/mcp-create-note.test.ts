@@ -236,7 +236,8 @@ describe("#108 create_note", () => {
     expect(names).toContain("create_note");
     // 讀 live doc 的三支在這個部署形態上整條不宣告——`create_note` 是它們的反例，所以
     // 這一行順帶釘住「它真的在閘門外」。#200：create_transfer_token 也在閘門外（token 限定）；read_note_image 亦然（任何憑證）。#180：copy_note、move_note_to_group 也在閘門外。
-    expect(names).toEqual(["copy_note", "create_note", "create_transfer_token", "list_notes", "list_trash", "move_note_to_group", "read_note_image", "search_notes"]);
+    // 資料夾 PR-3d：list_folders 只查 DB，也在閘門外（任何憑證）。
+    expect(names).toEqual(["copy_note", "create_note", "create_transfer_token", "list_folders", "list_notes", "list_trash", "move_note_to_group", "read_note_image", "search_notes"]);
 
     // P6：`inputSchema` **只能傳 raw shape 或裸 `ZodObject`（`.strict()` 亦可）**——傳 `ZodEffects`／union 時公告出去的 JSON Schema 會靜默變成
     // `{"type":"object","properties":{}}`（模型看不到任何欄位），而本檔另外五案（全部都自己

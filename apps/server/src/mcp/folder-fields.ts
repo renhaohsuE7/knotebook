@@ -6,10 +6,11 @@ import { inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { folders } from "../db/schema.js";
 import type { DbOrTx } from "../db/tx.js";
+import type { FolderAccess } from "../folders/queries.js";
 import { folderPathJsonSql } from "../folders/sql.js";
 import { noNul } from "../notes/schemas.js";
 import { UUID_RE } from "../notes/service.js";
-import { MCP_FOLDER_NAME_MAX, MCP_FOLDER_PATH_MAX, escapedLength, truncateText } from "./limits.js";
+import { MCP_FOLDER_NAME_MAX, MCP_FOLDER_PATH_MAX, MCP_TEXT_MAX, escapedLength, truncateText } from "./limits.js";
 
 /** 與 `NOTE_ID`（notes/schemas.ts）同形，各自一份物件：非 UUID 是輸入驗證錯誤（plan 讀碼發現 12）。 */
 export const FOLDER_ID = z.string().regex(UUID_RE).refine(noNul).transform(s => s.toLowerCase());
@@ -24,6 +25,53 @@ export type FolderRefForModel = z.infer<typeof folderRefSchema>;
 export function folderRefForModel(id: string, name: string): FolderRefForModel {
   const cut = truncateText(name, MCP_FOLDER_NAME_MAX);
   return { id, name: cut.text, ...(cut.truncated ? { nameTruncated: true as const } : {}) };
+}
+
+/**
+ * `list_folders` 的一項（spec §5.12）。personal／shared 不輸出 owner id（只有本人看得到，同 REST 的 `toFolderSpaceDto`）；
+ * 群組名照群組 `owner.name` 的上限截（`MCP_TEXT_MAX`）。（作者決定）不帶 `permissions`／`createdAt`。
+ */
+export const folderForModelSchema = z.object({
+  id: z.string(),
+  name: z.string().max(MCP_FOLDER_NAME_MAX),
+  nameTruncated: z.literal(true).optional(),
+  parentId: z.string().nullable(),
+  space: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("personal") }),
+    z.object({ kind: z.literal("shared") }),
+    z.object({
+      kind: z.literal("group"),
+      groupId: z.string(),
+      groupName: z.string().max(MCP_TEXT_MAX),
+      groupNameTruncated: z.literal(true).optional(),
+    }),
+  ]),
+  path: z.array(z.string().max(MCP_FOLDER_NAME_MAX)),
+  pathTruncated: z.literal(true).optional(),
+});
+export type FolderForModel = z.infer<typeof folderForModelSchema>;
+
+export function folderForModel(row: { access: FolderAccess; path: string[]; groupName: string | null }): FolderForModel {
+  const f = row.access.folder;
+  const sp = row.access.space;
+  const name = truncateText(f.name, MCP_FOLDER_NAME_MAX);
+  let space: FolderForModel["space"];
+  if (sp.kind === "group") {
+    const g = truncateText(row.groupName ?? "", MCP_TEXT_MAX);
+    space = { kind: "group", groupId: sp.groupId, groupName: g.text, ...(g.truncated ? { groupNameTruncated: true as const } : {}) };
+  } else {
+    space = { kind: sp.kind };
+  }
+  const path = truncateFolderPath(row.path);
+  return {
+    id: f.id,
+    name: name.text,
+    ...(name.truncated ? { nameTruncated: true as const } : {}),
+    parentId: f.parentId,
+    space,
+    path: path.path,
+    ...(path.truncated ? { pathTruncated: true as const } : {}),
+  };
 }
 
 /** 陣列 JSON 去掉兩端方括號的長度：Σ(段的逃脫後長度＋2)＋段數−1；空陣列 0。 */
