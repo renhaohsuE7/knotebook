@@ -183,6 +183,14 @@ describe("ThemeProvider / useTheme", () => {
     };
     const originalMatchMedia = window.matchMedia;
     window.matchMedia = (() => fakeMql) as unknown as typeof window.matchMedia;
+    const metas = ["light", "dark"].map((scheme) => {
+      const meta = document.createElement("meta");
+      meta.name = "theme-color";
+      meta.setAttribute("media", `(prefers-color-scheme: ${scheme})`);
+      meta.content = "#sentinel";
+      document.head.append(meta);
+      return meta;
+    });
 
     try {
       render(
@@ -195,6 +203,7 @@ describe("ThemeProvider / useTheme", () => {
       expect(screen.getByTestId("theme")).toHaveTextContent("system");
       expect(screen.getByTestId("resolved")).toHaveTextContent("light");
       expect(document.documentElement.classList.contains("dark")).toBe(false);
+      for (const meta of metas) expect(meta.getAttribute("content")).toBe(THEME_COLOR.light);
 
       // 模擬 OS 切到深色：flip matches 後觸發 change listener（theme 本身沒變）。
       act(() => {
@@ -205,7 +214,16 @@ describe("ThemeProvider / useTheme", () => {
       expect(screen.getByTestId("theme")).toHaveTextContent("system");
       expect(screen.getByTestId("resolved")).toHaveTextContent("dark");
       expect(document.documentElement.classList.contains("dark")).toBe(true);
+      // theme 沒變、只有 OS 翻轉：theme-color meta 也得跟著（不能只在 theme 改變時才同步）。
+      for (const meta of metas) expect(meta.getAttribute("content")).toBe(THEME_COLOR.dark);
+
+      act(() => {
+        fakeMql.matches = false;
+        changeListener?.();
+      });
+      for (const meta of metas) expect(meta.getAttribute("content")).toBe(THEME_COLOR.light);
     } finally {
+      for (const meta of metas) meta.remove();
       window.matchMedia = originalMatchMedia;
     }
   });
