@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { THEME_COLOR } from "./theme";
 
 // #336 PWA 最小可行方案：能加到主畫面、以 standalone 開啟；不含 service worker／離線。
 // 這裡只驗「交出去的檔案本身」——manifest 欄位、圖示檔與實際尺寸、index.html 的 link／meta。
@@ -11,7 +12,7 @@ const indexHtml = readFileSync(`${process.cwd()}/index.html`, "utf8");
 const head = indexHtml.slice(indexHtml.indexOf("<head>"), indexHtml.indexOf("</head>")).replace(/<!--[\s\S]*?-->/g, "");
 // index.css 的 --background 行尾**註解**記著淺／深兩組 hex（:root 與 :root.dark 各一條）。⚠ 這裡比對的是註解，
 // 不是 oklch 實際值：改了 oklch 卻沒改註解，這組測試照樣綠——hex 註解與 theme-color 都是人工同步。
-const backgroundHexes = [...readFileSync(`${process.cwd()}/src/index.css`, "utf8").matchAll(/--background:[^;]*;\s*\/\*\s*(#[0-9a-f]{6})/gi)].map((m) => m[1].toLowerCase());
+const backgroundHexes = [...readFileSync(`${process.cwd()}/src/index.css`, "utf8").matchAll(/(?<![\w-])--background:[^;]*;\s*\/\*\s*(#[0-9a-f]{6})/gi)].map((m) => m[1].toLowerCase());
 
 interface ManifestIcon {
   src: string;
@@ -117,6 +118,14 @@ describe("index.html 的 PWA 標記（#336）", () => {
     expect(light).toContain(`content="${readManifest().theme_color}"`);
     expect(readManifest().theme_color.toLowerCase()).toBe(backgroundHexes[0]);
     expect(dark?.toLowerCase()).toContain(`content="${backgroundHexes[1]}"`);
+  });
+
+  it("theme.tsx 的 THEME_COLOR＝index.html 兩個 theme-color 的初始 content＝manifest theme_color（淺色）——執行期同步與首屏標記不得各說各話", () => {
+    const metas = head.match(/<meta\s+name="theme-color"[^>]*>/g) ?? [];
+    const contentOf = (media: string) => metas.find((m) => m.includes(media))?.match(/content="([^"]*)"/)?.[1];
+    expect(contentOf("(prefers-color-scheme: light)")).toBe(THEME_COLOR.light);
+    expect(contentOf("(prefers-color-scheme: dark)")).toBe(THEME_COLOR.dark);
+    expect(readManifest().theme_color).toBe(THEME_COLOR.light);
   });
 
   it("原始 head（含註解）裡 `<script` 恰出現一次——security-headers.ts 的 INLINE_SCRIPT 對未剝註解的 HTML 算 hash，註解裡的 `<script …>` 字面也會被吃進去", () => {
